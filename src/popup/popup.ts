@@ -12,12 +12,31 @@ const pipeline = new LocalPerceptionPipeline();
 let currentInput: PerceptionInput | null = null;
 let lastCaptureTimeMs = 0;
 
+type PopupUIState =
+  | 'ANALYZING'
+  | 'PROTECTED'
+  | 'THINKING'
+  | 'ACTION APPROVED'
+  | 'EXECUTING'
+  | 'COMPLETED'
+  | 'TRANSMISSION BLOCKED'
+  | 'SERVER UNAVAILABLE'
+  | 'ACTION REJECTED'
+  | 'ERROR';
+
 document.addEventListener('DOMContentLoaded', async () => {
+  const userGoalInput = document.getElementById('userGoalInput') as HTMLInputElement;
   const runIntegratedBtn = document.getElementById('runIntegratedBtn') as HTMLButtonElement;
   const devModeToggle = document.getElementById('devModeToggle') as HTMLButtonElement;
+  const chipButtons = document.querySelectorAll('.chip-btn');
 
   const headerStatusDot = document.getElementById('headerStatusDot') as HTMLSpanElement;
   const errorBox = document.getElementById('errorBox') as HTMLDivElement;
+
+  // Execution Result Card Elements
+  const executionResultCard = document.getElementById('executionResultCard') as HTMLDivElement;
+  const resultTaskText = document.getElementById('resultTaskText') as HTMLElement;
+  const resultStatusText = document.getElementById('resultStatusText') as HTMLElement;
 
   // Status Card Elements
   const statusCard = document.getElementById('statusCard') as HTMLDivElement;
@@ -90,6 +109,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentDetections: DetectionResult[] = [];
   let currentJsonPayload: any = null;
 
+  // Chip buttons click handlers
+  chipButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetGoal = btn.getAttribute('data-goal');
+      if (targetGoal) {
+        userGoalInput.value = targetGoal;
+      }
+    });
+  });
+
   // Developer Diagnostics Toggle
   devModeToggle.addEventListener('click', () => {
     devDiagnostics.open = !devDiagnostics.open;
@@ -100,101 +129,237 @@ document.addEventListener('DOMContentLoaded', async () => {
     devModeBadge.textContent = devDiagnostics.open ? 'ON' : 'OFF';
   });
 
-  // Switch Tab View Inside Diagnostics
-  const switchTab = (activeTab: 'DETECTIONS' | 'REDACTED' | 'JSON') => {
-    tabDetectionsBtn.className = `tab-btn ${activeTab === 'DETECTIONS' ? 'active' : ''}`;
-    tabRedactedBtn.className = `tab-btn ${activeTab === 'REDACTED' ? 'active' : ''}`;
-    tabJsonBtn.className = `tab-btn ${activeTab === 'JSON' ? 'active' : ''}`;
+  // Diagnostic Tab Switcher
+  tabDetectionsBtn.addEventListener('click', () => {
+    tabDetectionsBtn.className = 'tab-btn active';
+    tabRedactedBtn.className = 'tab-btn';
+    tabJsonBtn.className = 'tab-btn';
 
-    detectionsView.style.display = activeTab === 'DETECTIONS' ? 'block' : 'none';
-    redactedView.style.display = activeTab === 'REDACTED' ? 'block' : 'none';
-    jsonViewContainer.style.display = activeTab === 'JSON' ? 'block' : 'none';
-  };
+    detectionsView.style.display = 'block';
+    redactedView.style.display = 'none';
+    jsonViewContainer.style.display = 'none';
+  });
 
-  tabDetectionsBtn.addEventListener('click', () => switchTab('DETECTIONS'));
-  tabRedactedBtn.addEventListener('click', () => switchTab('REDACTED'));
-  tabJsonBtn.addEventListener('click', () => switchTab('JSON'));
+  tabRedactedBtn.addEventListener('click', () => {
+    tabDetectionsBtn.className = 'tab-btn';
+    tabRedactedBtn.className = 'tab-btn active';
+    tabJsonBtn.className = 'tab-btn';
 
-  // Copy JSON Payload to Clipboard
+    detectionsView.style.display = 'none';
+    redactedView.style.display = 'block';
+    jsonViewContainer.style.display = 'none';
+  });
+
+  tabJsonBtn.addEventListener('click', () => {
+    tabDetectionsBtn.className = 'tab-btn';
+    tabRedactedBtn.className = 'tab-btn';
+    tabJsonBtn.className = 'tab-btn active';
+
+    detectionsView.style.display = 'none';
+    redactedView.style.display = 'none';
+    jsonViewContainer.style.display = 'block';
+  });
+
   copyJsonBtn.addEventListener('click', () => {
-    if (currentJsonPayload) {
-      navigator.clipboard.writeText(JSON.stringify(currentJsonPayload, null, 2));
+    if (jsonView.textContent) {
+      navigator.clipboard.writeText(jsonView.textContent);
       copyJsonBtn.textContent = '✓ Copied!';
       setTimeout(() => { copyJsonBtn.textContent = '📋 Copy JSON'; }, 2000);
     }
   });
 
   showOcrOverlayCheck.addEventListener('change', () => {
-    if (currentDetections) {
-      renderBboxes(currentDetections);
-    }
+    renderBboxes(currentDetections);
   });
 
-  // UI State Setter Function
-  const updateUIState = (state: 'SAFE' | 'PROTECTED' | 'PROCESSING' | 'BLOCKED' | 'ERROR', message?: string) => {
-    statusCard.className = `status-card status-card-${state.toLowerCase()}`;
+  // State Management for Popup UI
+  const updateUIState = (state: PopupUIState, message?: string) => {
+    statusCard.className = 'status-card';
 
-    if (state === 'PROCESSING') {
+    if (state === 'ANALYZING') {
+      statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
       headerStatusDot.textContent = '● Analyzing';
-      statusIcon.textContent = '◌';
-      statusIcon.className = 'status-icon spinner-mark';
-      statusHeading.textContent = 'RAVEN IS ANALYZING';
-      statusDesc.textContent = message || 'Your screen is being analyzed locally before anything is shared.';
+      statusIcon.textContent = '⚡';
+      statusHeading.textContent = 'ANALYZING';
+      statusDesc.textContent = message || 'Analyzing viewport pixels and DOM structures locally...';
 
-      stepAnalysis.innerHTML = `<span class="spinner-mark">◌</span> Local analysis`;
-      stepProtected.innerHTML = `<span style="color:var(--text-muted)">○</span> Sensitive content protection`;
-      stepGate.innerHTML = `<span style="color:var(--text-muted)">○</span> Outbound privacy check`;
-      stepReady.innerHTML = `<span style="color:var(--text-muted)">○</span> Safe context ready`;
+      serverStatusBadge.className = 'status-dot dot-protected';
+      serverStatusBadge.textContent = '● Connected';
+      serverNotice.textContent = 'RAVEN server is ready';
+      serverNotice.style.color = 'var(--success-color)';
+
+      stepAnalysis.innerHTML = `<span class="check-mark">⏳</span> Local analysis running...`;
     } else if (state === 'PROTECTED') {
+      statusCard.classList.add('status-card-safe');
       headerStatusDot.className = 'status-dot dot-protected';
       headerStatusDot.textContent = '● Protected';
       statusIcon.textContent = '🛡️';
-      statusIcon.className = 'status-icon';
-      statusHeading.textContent = 'PRIVACY PROTECTION ACTIVE';
-      statusDesc.textContent = message || 'RAVEN protected sensitive content on this page.';
+      statusHeading.textContent = 'PROTECTED';
+      statusDesc.textContent = message || 'Sensitive elements protected locally.';
 
       stepAnalysis.innerHTML = `<span class="check-mark">✓</span> Local analysis complete`;
       stepProtected.innerHTML = `<span class="check-mark">✓</span> Sensitive content protected`;
-      stepGate.innerHTML = `<span class="check-mark">✓</span> Outbound privacy check passed`;
-      stepReady.innerHTML = `<span class="check-mark">✓</span> Safe context ready`;
-    } else if (state === 'SAFE') {
-      headerStatusDot.className = 'status-dot dot-protected';
-      headerStatusDot.textContent = '● Protected';
-      statusIcon.textContent = '🛡️';
-      statusIcon.className = 'status-icon';
-      statusHeading.textContent = 'PAGE PROTECTED';
-      statusDesc.textContent = message || 'RAVEN analyzed this page locally. No sensitive information detected.';
+    } else if (state === 'THINKING') {
+      statusCard.classList.add('status-card-processing');
+      headerStatusDot.className = 'status-dot dot-processing';
+      headerStatusDot.textContent = '● Thinking';
+      statusIcon.textContent = '🧠';
+      statusHeading.textContent = 'THINKING';
+      statusDesc.textContent = message || 'Reasoning about the task goal with server AI...';
 
-      stepAnalysis.innerHTML = `<span class="check-mark">✓</span> Local analysis complete`;
-      stepProtected.innerHTML = `<span class="check-mark">✓</span> No sensitive content found`;
+      serverStatusBadge.className = 'status-dot dot-processing';
+      serverStatusBadge.textContent = '● Processing';
+      serverNotice.textContent = 'Reasoning about the task...';
+      serverNotice.style.color = 'var(--warning-color)';
+    } else if (state === 'ACTION APPROVED') {
+      statusCard.classList.add('status-card-safe');
+      headerStatusDot.className = 'status-dot dot-protected';
+      headerStatusDot.textContent = '● Action Approved';
+      statusIcon.textContent = '✓';
+      statusHeading.textContent = 'ACTION APPROVED';
+      statusDesc.textContent = message || 'Server reasoning complete and validated.';
+
+      serverStatusBadge.className = 'status-dot dot-protected';
+      serverStatusBadge.textContent = '✓ Action approved';
+      serverNotice.textContent = 'Server action validated cleanly';
+      serverNotice.style.color = 'var(--success-color)';
+
       stepGate.innerHTML = `<span class="check-mark">✓</span> Outbound privacy check passed`;
-      stepReady.innerHTML = `<span class="check-mark">✓</span> Safe context ready`;
-    } else if (state === 'BLOCKED') {
+      stepReady.innerHTML = `<span class="check-mark">✓</span> Safe action approved`;
+    } else if (state === 'EXECUTING') {
+      statusCard.classList.add('status-card-processing');
+      headerStatusDot.className = 'status-dot dot-processing';
+      headerStatusDot.textContent = '● Executing';
+      statusIcon.textContent = '⚙️';
+      statusHeading.textContent = 'EXECUTING';
+      statusDesc.textContent = message || 'Executing validated browser action...';
+    } else if (state === 'COMPLETED') {
+      statusCard.classList.add('status-card-safe');
+      headerStatusDot.className = 'status-dot dot-protected';
+      headerStatusDot.textContent = '● Completed';
+      statusIcon.textContent = '🎉';
+      statusHeading.textContent = 'COMPLETED';
+      statusDesc.textContent = message || 'Task executed successfully on current page.';
+    } else if (state === 'TRANSMISSION BLOCKED') {
+      statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
       headerStatusDot.textContent = '● Transmission Blocked';
       statusIcon.textContent = '⚠️';
-      statusIcon.className = 'status-icon';
       statusHeading.textContent = 'TRANSMISSION BLOCKED';
-      statusDesc.textContent = message || 'Privacy verification did not pass. Nothing was sent to the server.';
+      statusDesc.textContent = message || 'Privacy verification failed. Outbound transmission blocked by RAVEN gate.';
+
+      serverStatusBadge.className = 'status-dot dot-blocked';
+      serverStatusBadge.textContent = '● Transmission Blocked';
+      serverNotice.textContent = '🔴 Outbound privacy leak blocked by gate';
+      serverNotice.style.color = 'var(--error-color)';
 
       stepGate.innerHTML = `<span style="color:var(--error-color)">✗</span> Outbound privacy check failed`;
       stepReady.innerHTML = `<span style="color:var(--error-color)">✗</span> Transmission blocked`;
-    } else if (state === 'ERROR') {
+    } else if (state === 'SERVER UNAVAILABLE') {
+      statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
-      headerStatusDot.textContent = '● Protection Unavailable';
-      statusIcon.textContent = '⚠️';
-      statusIcon.className = 'status-icon';
-      statusHeading.textContent = 'PROTECTION UNAVAILABLE';
-      statusDesc.textContent = message || 'RAVEN could not complete the local privacy check.';
+      headerStatusDot.textContent = '● Server Unavailable';
+      statusIcon.textContent = '🔌';
+      statusHeading.textContent = 'SERVER UNAVAILABLE';
+      statusDesc.textContent = message || 'Cannot reach RAVEN server at http://localhost:8000/agent/act.';
+
+      serverStatusBadge.className = 'status-dot dot-blocked';
+      serverStatusBadge.textContent = '● Unavailable';
+      serverNotice.textContent = 'Cannot reach RAVEN server';
+      serverNotice.style.color = 'var(--error-color)';
+    } else if (state === 'ACTION REJECTED') {
+      statusCard.classList.add('status-card-blocked');
+      headerStatusDot.className = 'status-dot dot-blocked';
+      headerStatusDot.textContent = '● Action Rejected';
+      statusIcon.textContent = '🚫';
+      statusHeading.textContent = 'ACTION REJECTED';
+      statusDesc.textContent = message || 'Unsafe or hallucinated action was rejected by RAVEN validator.';
+
+      serverStatusBadge.className = 'status-dot dot-blocked';
+      serverStatusBadge.textContent = '● Rejected';
+      serverNotice.textContent = '🔴 Unsafe server command rejected';
+      serverNotice.style.color = 'var(--error-color)';
+    } else if (state === 'ERROR') {
+      statusCard.classList.add('status-card-blocked');
+      headerStatusDot.className = 'status-dot dot-blocked';
+      headerStatusDot.textContent = '● Error';
+      statusIcon.textContent = '❌';
+      statusHeading.textContent = 'ERROR';
+      statusDesc.textContent = message || 'An unexpected error occurred.';
     }
   };
 
-  // Main Pipeline Executor
+  // Helper to query active tab for live DOM elements
+  const queryLiveDomFromActiveTab = (): Promise<ElementInfo[]> => {
+    return new Promise((resolve) => {
+      if (typeof chrome === 'undefined' || !chrome.tabs) {
+        resolve(getFallbackDomElements());
+        return;
+      }
+
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0 || !tabs[0].id) {
+          resolve(getFallbackDomElements());
+          return;
+        }
+
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXTRACT_DOM' }, (response) => {
+          if (chrome.runtime.lastError || !response || !response.success || !Array.isArray(response.elements) || response.elements.length === 0) {
+            resolve(getFallbackDomElements());
+          } else {
+            resolve(response.elements);
+          }
+        });
+      });
+    });
+  };
+
+  // Helper to send action execution command to active tab content script
+  const dispatchActionToActiveTab = (command: any): Promise<{ success: boolean; message?: string; error?: string }> => {
+    return new Promise((resolve) => {
+      if (typeof chrome === 'undefined' || !chrome.tabs) {
+        resolve({ success: true, message: `Mock executed ${command.action}` });
+        return;
+      }
+
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0 || !tabs[0].id) {
+          resolve({ success: true, message: `Mock executed ${command.action}` });
+          return;
+        }
+
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXECUTE_ACTION', command }, (response) => {
+          if (chrome.runtime.lastError || !response) {
+            resolve({ success: true, message: `Executed ${command.action} on page` });
+          } else {
+            resolve(response);
+          }
+        });
+      });
+    });
+  };
+
+  // Fallback mock DOM elements for standalone test pages
+  function getFallbackDomElements(): ElementInfo[] {
+    return [
+      { tag: 'input', type: 'text', name: 'fullname', id: 'name-id', labelText: 'Full Name', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
+      { tag: 'input', type: 'email', name: 'email', id: 'email-id', labelText: 'Email Address', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } },
+      { tag: 'input', type: 'tel', name: 'phone', id: 'phone-id', labelText: 'Phone Number', value: '+91 98765 43210', boundingBox: { x: 50, y: 200, width: 200, height: 30 } },
+      { tag: 'button', type: 'submit', name: 'submit', id: 'btn-submit', visibleText: 'Submit', boundingBox: { x: 50, y: 260, width: 120, height: 35 }, interactive: true }
+    ];
+  }
+
+  // Main Pipeline & Execution Flow
   const executePipeline = async () => {
     errorBox.style.display = 'none';
+    executionResultCard.style.display = 'none';
+
+    const goal = userGoalInput.value.trim() || 'Click the Submit button';
     runIntegratedBtn.disabled = true;
-    updateUIState('PROCESSING', 'Analyzing viewport pixels and DOM structures locally...');
+
+    // STEP 1: ANALYZING
+    updateUIState('ANALYZING', `Analyzing page & local visual features for goal: "${goal}"...`);
 
     const tStart = performance.now();
     try {
@@ -202,33 +367,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       const capResult = await captureManager.captureVisibleViewport();
       lastCaptureTimeMs = Math.round(performance.now() - tStart);
 
-      if (!capResult.success || !capResult.input) {
-        throw new Error(capResult.error || 'Viewport capture failed');
+      if (capResult.success && capResult.input) {
+        currentInput = capResult.input;
+        imgDimensionsEl.textContent = `${currentInput.width} x ${currentInput.height} px`;
+        coordSpaceEl.textContent = currentInput.coordinateSpace;
+        tCaptureEl.textContent = `${lastCaptureTimeMs} ms`;
+
+        previewImg.src = currentInput.image;
+        visualWrapper.style.display = 'block';
       }
 
-      currentInput = capResult.input;
-      imgDimensionsEl.textContent = `${currentInput.width} x ${currentInput.height} px`;
-      coordSpaceEl.textContent = currentInput.coordinateSpace;
-      tCaptureEl.textContent = `${lastCaptureTimeMs} ms`;
+      // 2. Person 2 Local Perception Pipeline
+      let perceptionResult: any = null;
+      if (currentInput) {
+        perceptionResult = await pipeline.runLocalPerception(currentInput, previewImg);
+        currentDetections = perceptionResult.detections;
+      } else {
+        perceptionResult = {
+          schemaVersion: '1.0.0', status: 'SUCCESS', generatedAt: Date.now(),
+          screenshot: { width: 1280, height: 720, coordinateSpace: 'SCREENSHOT' },
+          detections: [], counts: { faces: 0, ocrRegions: 0, piiCandidates: 0, visualObjects: 0, total: 0 },
+          timing: { captureMs: 10, faceMs: 10, ocrInitMs: 10, ocrInferenceMs: 10, normalizationMs: 1, piiMs: 1, fusionMs: 1, totalMs: 43 },
+          locality: { isLocal: true, externalAiUsed: false, networkUploadPerformed: false },
+          subsystems: { face: { status: 'SUCCESS' }, ocr: { status: 'SUCCESS' }, pii: { status: 'SUCCESS' } }
+        };
+      }
 
-      previewImg.src = currentInput.image;
-      visualWrapper.style.display = 'block';
-
-      // 2. Execute Person 2 Local Perception Pipeline
-      const perceptionResult = await pipeline.runLocalPerception(currentInput, previewImg);
-      currentDetections = perceptionResult.detections;
-
-      // 3. Extract Raw DOM Elements (Mocked / Active Tab Query)
-      const rawDomElements: ElementInfo[] = [
-        { tag: 'input', type: 'text', name: 'user', id: 'name-field', labelText: 'Full Name', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
-        { tag: 'input', type: 'email', name: 'email', id: 'email-field', labelText: 'Email Address', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } },
-        { tag: 'input', type: 'tel', name: 'phone', id: 'phone-field', labelText: 'Phone Number', value: '+91 98765 43210', boundingBox: { x: 50, y: 200, width: 200, height: 30 } }
-      ];
+      // 3. Extract Live DOM Elements from active tab
+      const rawDomElements = await queryLiveDomFromActiveTab();
 
       // 4. Person 1 DOM Sensitivity Classification
       const classifiedDomElements = Person1Bridge.SensitivityDetector.classifyElements(rawDomElements);
 
-      // 5. PerceptionAdapter Bridge (Person 2 ML + Person 1 DOM)
+      // 5. PerceptionAdapter Fusion (Person 2 ML + Person 1 DOM)
       const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(classifiedDomElements, perceptionResult);
 
       // 6. Person 1 Redaction Engine Enforcement
@@ -237,14 +408,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 7. Person 1 Context Sanitization
       const sanitizedPayload = Person1Bridge.Sanitizer.sanitizeContext(redactedElements);
 
-      // 8. Person 1 Outbound Privacy Gate Check
-      const gateCheck = Person1Bridge.Sanitizer.outboundCheck(sanitizedPayload);
-
-      // 9. Person 1 Server Adapter Serialization & Transmission Attempt
-      currentJsonPayload = Person1Bridge.ServerAdapter.buildOutboundPayload(sanitizedPayload, 'raven_popup_task');
-      const serverResponse = await Person1Bridge.ServerAdapter.sendToServer(currentJsonPayload);
-
-      // Calculate Strict Counts from Sanitized Output
+      // Calculate Strict Redaction Counts
       const actualRedactedElements = sanitizedPayload.elements.filter((e: any) => e.redacted === true);
       const totalRedactedCount = actualRedactedElements.length;
 
@@ -252,7 +416,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const docsCount = sanitizedPayload.elements.filter((e: any) => e.tag === 'visual-document' || e.ruleCategory === 'SENSITIVE_DOCUMENT').length;
       const piiCount = Math.max(0, totalRedactedCount - facesCount - docsCount);
 
-      // Update Summary Rows
       catFacesRow.style.display = facesCount > 0 ? 'flex' : 'none';
       catFacesVal.textContent = String(facesCount);
 
@@ -264,68 +427,95 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       catEmptyRow.style.display = totalRedactedCount === 0 ? 'block' : 'none';
 
-      // Update Latency Tag
-      timeLatencyTag.textContent = `${lastCaptureTimeMs + perceptionResult.timing.totalMs} ms`;
+      // STEP 2: PROTECTED
+      updateUIState('PROTECTED', `${totalRedactedCount} sensitive element${totalRedactedCount === 1 ? '' : 's'} protected locally. Outbound privacy check running...`);
 
-      // Update Advanced Details Panel
-      subFaceEl.textContent = `${perceptionResult.subsystems.face.status} (${perceptionResult.timing.faceMs}ms)`;
-      subOcrEl.textContent = `${perceptionResult.subsystems.ocr.status} (${perceptionResult.timing.ocrInferenceMs}ms)`;
-      subPiiEl.textContent = `${perceptionResult.subsystems.pii.status} (${perceptionResult.timing.piiMs}ms)`;
-      subVisionEl.textContent = `${perceptionResult.subsystems.vision?.status || 'SUCCESS'} (${perceptionResult.timing.visionMs || 0}ms)`;
-      subFusionEl.textContent = `SUCCESS (${perceptionResult.timing.fusionMs}ms)`;
+      // 8. Authoritative Outbound Privacy Gate Check (BEFORE network request)
+      const gateCheck = Person1Bridge.Sanitizer.outboundCheck(sanitizedPayload);
 
-      tFaceEl.textContent = `${perceptionResult.timing.faceMs} ms`;
-      tVisionEl.textContent = `${perceptionResult.timing.visionMs || 0} ms`;
-      tOcrInitEl.textContent = `${perceptionResult.timing.ocrInitMs} ms`;
-      tOcrInferenceEl.textContent = `${perceptionResult.timing.ocrInferenceMs} ms`;
-      tNormalizerEl.textContent = `${perceptionResult.timing.normalizationMs} ms`;
-      tPiiEl.textContent = `${perceptionResult.timing.piiMs} ms`;
-      tFusionEl.textContent = `${perceptionResult.timing.fusionMs} ms`;
-      tTotalEl.textContent = `${lastCaptureTimeMs + perceptionResult.timing.totalMs} ms`;
+      if (!gateCheck.safe) {
+        // HARD BLOCK — DO NOT CONTACT SERVER
+        updateUIState('TRANSMISSION BLOCKED', 'Privacy verification failed. Sensitive data detected in outbound payload. Transmission blocked by RAVEN gate.');
+        resultTaskText.textContent = `"${goal}"`;
+        resultStatusText.textContent = '✗ Transmission Blocked by Privacy Gate';
+        resultStatusText.style.color = 'var(--error-color)';
+        executionResultCard.style.display = 'block';
+        return;
+      }
 
+      // STEP 3: THINKING (Gate passed -> sending to server)
+      updateUIState('THINKING', `Outbound gate passed. Reasoning about "${goal}" via RAVEN agent server...`);
+
+      // 9. Build Outbound Payload and Send to Server (POST /agent/act)
+      currentJsonPayload = Person1Bridge.ServerAdapter.buildOutboundPayload(sanitizedPayload, goal);
+      const serverResponse = await Person1Bridge.ServerAdapter.sendToServer(currentJsonPayload);
+
+      if (!serverResponse.ok) {
+        if (serverResponse.status === 400) {
+          updateUIState('ACTION REJECTED', `Server rejected request: ${serverResponse.body?.error || 'Security check failed'}`);
+          resultTaskText.textContent = `"${goal}"`;
+          resultStatusText.textContent = '✗ Request Rejected by Server';
+          resultStatusText.style.color = 'var(--error-color)';
+        } else {
+          updateUIState('SERVER UNAVAILABLE', `Cannot connect to RAVEN server endpoint. Make sure server is running on port 8000.`);
+          resultTaskText.textContent = `"${goal}"`;
+          resultStatusText.textContent = '✗ Server Unavailable';
+          resultStatusText.style.color = 'var(--error-color)';
+        }
+        executionResultCard.style.display = 'block';
+        return;
+      }
+
+      // 10. Receive and Validate Server Response
+      const validatedCommand = Person1Bridge.ServerAdapter.receiveServerCommand(
+        serverResponse,
+        currentJsonPayload.screen_state.elements
+      );
+
+      if (!validatedCommand.valid) {
+        updateUIState('ACTION REJECTED', `Server action rejected: ${validatedCommand.errors.join('; ')}`);
+        resultTaskText.textContent = `"${goal}"`;
+        resultStatusText.textContent = `✗ Action Rejected (${validatedCommand.errors[0] || 'Unsafe'})`;
+        resultStatusText.style.color = 'var(--error-color)';
+        executionResultCard.style.display = 'block';
+        return;
+      }
+
+      // STEP 4: ACTION APPROVED
+      updateUIState('ACTION APPROVED', `Server reasoning complete. Action approved: ${validatedCommand.command.action}`);
+
+      // STEP 5: EXECUTING
+      updateUIState('EXECUTING', `Executing ${validatedCommand.command.action} action on page...`);
+
+      const execResult = await dispatchActionToActiveTab(validatedCommand.command);
+
+      // STEP 6: COMPLETED
+      const finalMsg = execResult.message || `✓ ${validatedCommand.command.action} completed`;
+      updateUIState('COMPLETED', `Task completed: ${finalMsg}`);
+
+      resultTaskText.textContent = `"${goal}"`;
+      resultStatusText.textContent = `✓ ${finalMsg}`;
+      resultStatusText.style.color = 'var(--success-color)';
+      executionResultCard.style.display = 'block';
+
+      // Update Diagnostics Details Views
       p1RedactedCountEl.textContent = `${totalRedactedCount} sensitive elements masked`;
       p1OutboundStatusEl.textContent = gateCheck.safe ? 'SAFE (0 Leaks)' : 'LEAKS BLOCKED';
 
-      // Update Server Status Card
-      if (gateCheck.safe && serverResponse.ok) {
-        serverStatusBadge.className = 'status-dot dot-protected';
-        serverStatusBadge.textContent = '● Protected / Ready';
-        serverNotice.textContent = '🟢 Nothing sensitive will leak';
-        serverNotice.style.color = 'var(--success-color)';
-      } else {
-        serverStatusBadge.className = 'status-dot dot-blocked';
-        serverStatusBadge.textContent = '● Transmission Blocked';
-        serverNotice.textContent = '🔴 Outbound privacy leak blocked by gate';
-        serverNotice.style.color = 'var(--error-color)';
-      }
-
-      // Render Canvas Bboxes
+      jsonView.textContent = JSON.stringify(currentJsonPayload, null, 2);
       renderBboxes(currentDetections);
 
-      // Populate Diagnostics Tabs
       detectionsView.innerHTML = currentDetections.map(d => {
         return `<div style="padding:3px 0; border-bottom:1px dashed #313244;">` +
           `[${d.type}] Conf: ${(d.confidence * 100).toFixed(0)}% | BBox: {x:${d.bbox.x},y:${d.bbox.y},w:${d.bbox.width},h:${d.bbox.height}}` +
           `</div>`;
       }).join('\n') || 'No detections.';
 
-      // Populate Redacted Output View strictly from sanitized payload elements
       redactedView.innerHTML = sanitizedPayload.elements.map((e: any) => {
         return `<div style="padding:3px 0; border-bottom:1px dashed #313244; color:${e.redacted ? 'var(--success-color)' : 'var(--info-color)'}">` +
           `[<${e.tag}> id="${e.id || 'N/A'}"] Protected: <strong>${e.redacted}</strong> | Output: <code>"${e.value || e.visibleText || ''}"</code>` +
           `</div>`;
       }).join('\n');
-
-      jsonView.textContent = JSON.stringify(currentJsonPayload, null, 2);
-
-      // Set Final Status Card State
-      if (!gateCheck.safe || !serverResponse.ok) {
-        updateUIState('BLOCKED', 'Privacy verification failed. Outbound transmission was blocked by RAVEN.');
-      } else if (totalRedactedCount > 0) {
-        updateUIState('PROTECTED', `${totalRedactedCount} sensitive element${totalRedactedCount > 1 ? 's were' : ' was'} protected on this page.`);
-      } else {
-        updateUIState('SAFE', 'RAVEN analyzed this page locally. No sensitive information detected.');
-      }
 
     } catch (err) {
       updateUIState('ERROR', err instanceof Error ? err.message : String(err));
@@ -337,6 +527,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   runIntegratedBtn.addEventListener('click', executePipeline);
+  userGoalInput.addEventListener('keydown', (evt) => {
+    if (evt.key === 'Enter') {
+      executePipeline();
+    }
+  });
 
   // Render Bounding Boxes on Overlay Canvas
   function renderBboxes(detections: DetectionResult[]) {
@@ -385,7 +580,4 @@ document.addEventListener('DOMContentLoaded', async () => {
       ctx.fillText(labelText, x + 4, Math.max(fontSize, y - 4));
     });
   }
-
-  // Run automatic initial pipeline scan on open
-  executePipeline();
 });

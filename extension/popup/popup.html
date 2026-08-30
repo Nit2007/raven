@@ -99,47 +99,23 @@
       border-radius: 6px;
       width: 28px;
       height: 28px;
-      cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      cursor: pointer;
       font-size: 13px;
-      transition: all 0.2s ease;
     }
 
     .gear-btn:hover {
       background: var(--card-inner-bg);
       color: var(--text-color);
-      border-color: var(--border-focus);
     }
 
     .header-subtitle {
-      margin: 0 0 12px 0;
+      margin: 0 0 10px 0;
       font-size: 11px;
       color: var(--text-muted);
     }
-
-    /* Primary Action Button */
-    .btn-analyze {
-      width: 100%;
-      padding: 9px;
-      background: linear-gradient(135deg, #cba6f7, #89b4fa);
-      color: #11111b;
-      font-weight: 700;
-      font-size: 12px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: opacity 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-
-    .btn-analyze:hover { opacity: 0.92; }
-    .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Cards */
     .card {
@@ -150,74 +126,6 @@
       margin-bottom: 10px;
     }
 
-    /* Status Banner Card */
-    .status-card {
-      border-radius: 10px;
-      padding: 14px;
-      margin-bottom: 10px;
-      border: 1px solid var(--border-color);
-      transition: all 0.3s ease;
-    }
-
-    .status-card-safe {
-      background: rgba(166, 227, 161, 0.08);
-      border-color: rgba(166, 227, 161, 0.3);
-    }
-
-    .status-card-protected {
-      background: rgba(203, 166, 247, 0.08);
-      border-color: rgba(203, 166, 247, 0.3);
-    }
-
-    .status-card-processing {
-      background: rgba(249, 226, 175, 0.08);
-      border-color: rgba(249, 226, 175, 0.3);
-    }
-
-    .status-card-blocked {
-      background: rgba(243, 139, 168, 0.08);
-      border-color: rgba(243, 139, 168, 0.3);
-    }
-
-    .status-card-header {
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
-    }
-
-    .status-icon {
-      font-size: 24px;
-      line-height: 1;
-      margin-top: 2px;
-    }
-
-    .status-heading {
-      margin: 0 0 4px 0;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-      text-transform: uppercase;
-    }
-
-    .status-desc {
-      margin: 0;
-      font-size: 11px;
-      color: var(--text-muted);
-      line-height: 1.4;
-    }
-
-    .status-card-footer {
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.1);
-      font-size: 10px;
-      font-weight: 600;
-      color: var(--success-color);
-      display: flex;
-      justify-content: space-between;
-    }
-
-    /* Section Headers */
     .section-title {
       font-size: 11px;
       font-weight: 700;
@@ -225,12 +133,150 @@
       letter-spacing: 0.5px;
       color: var(--text-muted);
       margin-bottom: 8px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
     }
 
-    /* Category List */
+    /* Goal Input Card */
+    .goal-card {
+      border-color: var(--border-focus);
+      background: #181825;
+    }
+
+    .goal-input-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .goal-input {
+      width: 100%;
+      padding: 8px 10px;
+      background: #11111b;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-color);
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .goal-input:focus {
+      border-color: var(--accent-color);
+    }
+
+    .goal-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+
+    .chip-btn {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .chip-btn:hover {
+      background: #313244;
+      color: var(--text-color);
+      border-color: var(--accent-color);
+    }
+
+    /* Primary Action Button */
+    .btn-analyze {
+      width: 100%;
+      padding: 10px;
+      background: linear-gradient(135deg, #cba6f7 0%, #b4befe 100%);
+      color: #11111b;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-analyze:hover {
+      opacity: 0.92;
+    }
+
+    .btn-analyze:active {
+      transform: scale(0.99);
+    }
+
+    .btn-analyze:disabled {
+      background: #45475a;
+      color: #a6adc8;
+      cursor: not-allowed;
+    }
+
+    /* Real-Time Status Card */
+    .status-card {
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border-color);
+    }
+
+    .status-card-safe {
+      background: rgba(166, 227, 161, 0.06);
+      border-color: rgba(166, 227, 161, 0.25);
+    }
+
+    .status-card-processing {
+      background: rgba(249, 226, 175, 0.06);
+      border-color: rgba(249, 226, 175, 0.25);
+    }
+
+    .status-card-blocked {
+      background: rgba(243, 139, 168, 0.06);
+      border-color: rgba(243, 139, 168, 0.25);
+    }
+
+    .status-card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .status-icon {
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .status-heading {
+      margin: 0 0 2px 0;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .status-desc {
+      margin: 0;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .status-card-footer {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* Summary Breakdown Rows */
     .category-list {
       display: flex;
       flex-direction: column;
@@ -241,33 +287,28 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 8px;
-      background: var(--card-inner-bg);
-      border-radius: 6px;
-      border: 1px solid var(--border-color);
       font-size: 11px;
+      padding: 4px 6px;
+      background: var(--card-inner-bg);
+      border-radius: 4px;
     }
 
     .category-badge {
-      background: #313244;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
       color: var(--accent-color);
-      padding: 2px 8px;
-      border-radius: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
       font-size: 10px;
-      font-weight: 700;
     }
 
     .empty-summary {
       font-size: 11px;
-      color: var(--text-muted);
-      text-align: center;
-      padding: 8px;
-      background: var(--card-inner-bg);
-      border-radius: 6px;
-      border: 1px dashed var(--border-color);
+      color: var(--success-color);
+      font-weight: 600;
     }
 
-    /* Privacy Pipeline Checklist */
+    /* Pipeline Flow Checklist */
     .pipeline-list {
       display: flex;
       flex-direction: column;
@@ -277,14 +318,13 @@
     .pipeline-item {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       font-size: 11px;
       color: var(--text-muted);
     }
 
     .pipeline-item.active {
       color: var(--text-color);
-      font-weight: 500;
     }
 
     .check-mark {
@@ -292,27 +332,53 @@
       font-weight: bold;
     }
 
-    .spinner-mark {
-      color: var(--warning-color);
-      animation: spin 1s linear infinite;
-      display: inline-block;
-    }
-
-    @keyframes spin { 100% { transform: rotate(360deg); } }
-
     /* Server Communication Box */
     .server-box {
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 11px;
+      font-weight: 600;
     }
 
     .server-notice {
       margin-top: 6px;
       font-size: 10px;
       color: var(--success-color);
-      font-weight: 600;
+      font-weight: 500;
+    }
+
+    /* Execution Result Card */
+    .result-card {
+      border-color: rgba(166, 227, 161, 0.3);
+      background: rgba(166, 227, 161, 0.05);
+    }
+
+    .result-row {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 6px;
+    }
+    .result-row:last-child { margin-bottom: 0; }
+
+    .result-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    .result-task {
+      font-size: 11px;
+      color: var(--text-color);
+      font-style: italic;
+    }
+
+    .result-status {
+      font-size: 12px;
+      color: var(--success-color);
+      font-weight: 700;
     }
 
     /* Collapsibles */
@@ -358,40 +424,6 @@
       margin-bottom: 4px;
     }
     .diag-row:last-child { margin-bottom: 0; }
-
-    /* Diagnostics & Visual Preview */
-    .toggle-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 10px;
-      font-family: system-ui, sans-serif;
-      color: var(--text-muted);
-    }
-
-    .visual-wrapper {
-      position: relative;
-      margin-top: 8px;
-      border-radius: 6px;
-      border: 1px solid var(--border-color);
-      background-color: #11111b;
-      overflow: hidden;
-      display: none;
-    }
-
-    .visual-wrapper img, .visual-wrapper canvas {
-      width: 100%;
-      height: auto;
-      display: block;
-    }
-
-    .visual-wrapper canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-    }
 
     /* Output Tabs & Code Viewer */
     .output-tab-bar {
@@ -467,29 +499,54 @@
     <div class="brand-title-group">
       <span class="brand-logo">🛡️</span>
       <span class="brand-title">RAVEN</span>
-      <span id="headerStatusDot" class="status-dot dot-protected">● Protected</span>
+      <span id="headerStatusDot" class="status-dot dot-protected">● Connected</span>
     </div>
     <button id="devModeToggle" class="gear-btn" title="Developer Diagnostics Mode">⚙️</button>
   </header>
-  <p class="header-subtitle">Your page stays private while RAVEN works.</p>
+  <p class="header-subtitle">On-device privacy layer & agent execution.</p>
 
-  <!-- Analyze / Rescan Action Button -->
-  <button id="runIntegratedBtn" class="btn-analyze">⚡ Analyze & Protect Page</button>
+  <!-- User Goal Input Card -->
+  <div class="card goal-card">
+    <div class="section-title">Task Goal</div>
+    <div class="goal-input-wrapper">
+      <input type="text" id="userGoalInput" class="goal-input" placeholder="What would you like me to do?" value="Click the Submit button" />
+      <button id="runIntegratedBtn" class="btn-analyze">⚡ Analyze & Execute</button>
+    </div>
+    <div class="goal-chips">
+      <button class="chip-btn" data-goal="Click the Submit button">Click Submit</button>
+      <button class="chip-btn" data-goal="Find the search box">Find Search</button>
+      <button class="chip-btn" data-goal="Scroll down">Scroll Down</button>
+      <button class="chip-btn" data-goal="Select India">Select India</button>
+    </div>
+  </div>
 
   <!-- Error Alert Banner -->
   <div id="errorBox" class="error-box"></div>
 
-  <!-- Real-Time Protection Status Card -->
+  <!-- Execution Result Card (Shown after execution) -->
+  <div id="executionResultCard" class="card result-card" style="display: none;">
+    <div class="section-title">Execution Result</div>
+    <div class="result-row">
+      <span class="result-label">TASK</span>
+      <strong id="resultTaskText" class="result-task">"Click the Submit button"</strong>
+    </div>
+    <div class="result-row">
+      <span class="result-label">RESULT</span>
+      <strong id="resultStatusText" class="result-status">✓ Submit clicked</strong>
+    </div>
+  </div>
+
+  <!-- Real-Time Status Card -->
   <div id="statusCard" class="status-card status-card-safe">
     <div class="status-card-header">
       <span id="statusIcon" class="status-icon">🛡️</span>
       <div>
-        <h3 id="statusHeading" class="status-heading">Page Protected</h3>
-        <p id="statusDesc" class="status-desc">RAVEN analyzed this page locally. No sensitive information detected that needs to be protected.</p>
+        <h3 id="statusHeading" class="status-heading">READY</h3>
+        <p id="statusDesc" class="status-desc">Enter a task goal above and click Analyze & Execute.</p>
       </div>
     </div>
     <div class="status-card-footer">
-      <span id="localityTag">✓ Processing on this device</span>
+      <span id="localityTag">✓ On-Device Privacy Enforcement</span>
       <span id="timeLatencyTag">Ready</span>
     </div>
   </div>
@@ -535,14 +592,14 @@
     </div>
   </div>
 
-  <!-- Server Communication Card -->
+  <!-- Clearer Server Communication Card -->
   <div class="card">
     <div class="server-box">
-      <span>Server Communication</span>
-      <strong id="serverStatusBadge" class="status-dot dot-protected">● Protected / Ready</strong>
+      <span>SERVER</span>
+      <strong id="serverStatusBadge" class="status-dot dot-protected">● Connected</strong>
     </div>
     <div id="serverNotice" class="server-notice">
-      🟢 Nothing sensitive will leak
+      RAVEN server is ready
     </div>
   </div>
 
@@ -563,7 +620,7 @@
     </div>
   </details>
 
-  <!-- Collapsible Developer Diagnostics -->
+  <!-- Collapsible Developer Diagnostics (Hidden by default) -->
   <details id="devDiagnostics">
     <summary><span>▸ Developer diagnostics</span> <span id="devModeBadge" style="font-size:9px;">OFF</span></summary>
     <div class="details-content">
