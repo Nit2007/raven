@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "SafeScreen DOM Analyzer",
+  "version": "0.2.0",
+  "description": "Client-side DOM analysis and privacy redaction for browser AI agents",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "action": {
+    "default_popup": "dashboard/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "dom-analyzer.js",
+        "sensitivity-detector.js",
+        "redaction-engine.js",
+        "sanitizer.js",
+        "server-adapter.js",
+        "content-script.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard/*", "data/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

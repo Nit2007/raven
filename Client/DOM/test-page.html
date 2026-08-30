@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- http://localhost:3000/Client/DOM/test-page.html -->
+   <!-- npx http-server ./ -p 3000 -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafeScreen Test — Sample Checkout Page</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --border: #e0e0e5;
+      --text: #1d1d1f;
+      --text-secondary: #6e6e73;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 560px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title .icon {
+      width: 24px;
+      height: 24px;
+      background: var(--accent);
+      color: white;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group.full { grid-column: 1 / -1; }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text);
+      background: #fafafa;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 14px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .btn-submit:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-submit:active {
+      transform: scale(0.99);
+    }
+
+    /* Some "normal" content with PII mixed in for testing */
+    .content-block {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .content-block h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .content-block p {
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Checkout</h1>
+    <p class="subtitle">Complete your order — all fields below contain test data for SafeScreen demo</p>
+
+    <!-- Login section (password field) -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">1</div>
+        Account Login
+      </div>
+      <div class="form-group">
+        <label for="login-email">Email Address</label>
+        <input type="email" id="login-email" name="email" autocomplete="email"
+               placeholder="you@example.com" value="alice.johnson@gmail.com">
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" name="password" autocomplete="current-password"
+               placeholder="Enter your password" value="SuperSecret123!">
+      </div>
+    </div>
+
+    <!-- Personal info -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">2</div>
+        Personal Information
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="first-name">First Name</label>
+          <input type="text" id="first-name" name="firstName" value="Alice">
+        </div>
+        <div class="form-group">
+          <label for="last-name">Last Name</label>
+          <input type="text" id="last-name" name="lastName" value="Johnson">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone Number</label>
+        <input type="tel" id="phone" name="phone" autocomplete="tel"
+               placeholder="(555) 123-4567" value="+1 (555) 867-5309">
+      </div>
+      <div class="form-group">
+        <label for="ssn">SSN (for identity verification)</label>
+        <input type="text" id="ssn" name="ssn" placeholder="XXX-XX-XXXX" value="123-45-6789">
+      </div>
+      <div class="form-group">
+        <label for="aadhaar">Aadhaar Number</label>
+        <input type="text" id="aadhaar" name="aadhaar" placeholder="XXXX XXXX XXXX" value="1234 5678 9012">
+      </div>
+    </div>
+
+    <!-- Payment -->
+    <div class="card">
+      <div class="card-title">
+        <div class="icon">3</div>
+        Payment Details
+      </div>
+      <div class="form-group">
+        <label for="card-number">Card Number</label>
+        <input type="text" id="card-number" name="cardNumber" autocomplete="cc-number"
+               placeholder="1234 5678 9012 3456" value="4532 0159 8372 6541">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="card-expiry">Expiry</label>
+          <input type="text" id="card-expiry" name="cardExpiry" autocomplete="cc-exp"
+                 placeholder="MM/YY" value="09/28">
+        </div>
+        <div class="form-group">
+          <label for="card-cvv">CVV</label>
+          <input type="text" id="card-cvv" name="cvv" autocomplete="cc-csc"
+                 placeholder="123" value="847">
+        </div>
+      </div>
+    </div>
+
+    <!-- Some normal text content with embedded PII (for SENSITIVE_TEXT testing) -->
+    <div class="content-block">
+      <h2>Order Confirmation Note</h2>
+      <p>
+        Your receipt will be sent to alice.johnson@gmail.com. If you have questions
+        about your order, call our support line at +1-800-555-0199 or reach out to
+        your account manager.
+      </p>
+      <p>
+        For reference, your loyalty card number is 4111 1111 1111 1111 and your
+        membership ID is MEM-2024-AJ. Your account was verified with SSN 987-65-4321.
+      </p>
+    </div>
+
+    <!-- Normal safe content -->
+    <div class="content-block">
+      <h2>Shipping Policy</h2>
+      <p>
+        Standard shipping takes 5-7 business days. Express shipping is available
+        for an additional fee. All orders over $50 qualify for free shipping.
+        This paragraph contains no sensitive information whatsoever.
+      </p>
+    </div>
+
+    <button class="btn-submit" type="button" onclick="alert('This is a test page for SafeScreen!')">
+      Place Order — $149.99
+    </button>
+
+    <p class="footer-note">
+      This is a test page for the SafeScreen DOM Analyzer extension.
+      All data above is fake and used for demonstration purposes only.
+    </p>
+  </div>
+</body>
+</html>

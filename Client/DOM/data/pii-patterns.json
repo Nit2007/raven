@@ -1,0 +1,287 @@
+{
+  "version": "1.0.0",
+  "categories": {
+    "credentials": {
+      "label": "Credentials",
+      "rules": [
+        {
+          "id": "cred-password-type",
+          "description": "Password input by type attribute",
+          "scope": "field",
+          "match": { "inputType": "password" },
+          "confidence": 1.0,
+          "token": "[PASSWORD]"
+        },
+        {
+          "id": "cred-password-keyword",
+          "description": "Password field by keyword in name/id/label/placeholder",
+          "scope": "field",
+          "keywords": ["password", "passwd", "passwort", "contraseña", "mot de passe", "senha", "secret", "pin-code", "passcode"],
+          "autocompleteHints": ["current-password", "new-password"],
+          "confidence": 0.9,
+          "token": "[PASSWORD]"
+        },
+        {
+          "id": "cred-token-keyword",
+          "description": "API key / token / secret fields",
+          "scope": "field",
+          "keywords": ["api-key", "apikey", "api_key", "token", "access-token", "auth-token", "secret-key"],
+          "confidence": 0.85,
+          "token": "[SECRET]"
+        }
+      ]
+    },
+    "contact": {
+      "label": "Contact Information",
+      "rules": [
+        {
+          "id": "contact-email-type",
+          "description": "Email input by type attribute",
+          "scope": "field",
+          "match": { "inputType": "email" },
+          "confidence": 1.0,
+          "token": "[EMAIL]"
+        },
+        {
+          "id": "contact-email-keyword",
+          "description": "Email field by keyword",
+          "scope": "field",
+          "keywords": ["email", "e-mail", "correo", "courriel", "emailaddress", "email-address", "email_address"],
+          "autocompleteHints": ["email"],
+          "confidence": 0.9,
+          "token": "[EMAIL]"
+        },
+        {
+          "id": "contact-email-text",
+          "description": "Email address in free text",
+          "scope": "text",
+          "regex": "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}",
+          "regexFlags": "g",
+          "confidence": 0.95,
+          "token": "[EMAIL]"
+        },
+        {
+          "id": "contact-phone-type",
+          "description": "Phone input by type attribute",
+          "scope": "field",
+          "match": { "inputType": "tel" },
+          "confidence": 1.0,
+          "token": "[PHONE]"
+        },
+        {
+          "id": "contact-phone-keyword",
+          "description": "Phone field by keyword",
+          "scope": "field",
+          "keywords": ["phone", "mobile", "tel", "telephone", "telefon", "teléfono", "téléphone", "telefone", "cell", "cellphone", "fax"],
+          "autocompleteHints": ["tel", "tel-national", "tel-local"],
+          "confidence": 0.9,
+          "token": "[PHONE]"
+        },
+        {
+          "id": "contact-phone-text",
+          "description": "Phone number in free text",
+          "scope": "text",
+          "regex": "(?:\\+?\\d{1,3}[\\s\\-.]?)?\\(?\\d{2,4}\\)?[\\s\\-.]?\\d{3,4}[\\s\\-.]?\\d{3,4}",
+          "regexFlags": "g",
+          "confidence": 0.8,
+          "token": "[PHONE]"
+        }
+      ]
+    },
+    "financial": {
+      "label": "Financial",
+      "rules": [
+        {
+          "id": "fin-card-keyword",
+          "description": "Credit card number field by keyword",
+          "scope": "field",
+          "keywords": ["card-number", "cardnumber", "card_number", "cc-number", "ccnum", "cc-num", "credit-card", "creditcard", "debit-card", "kartennummer"],
+          "autocompleteHints": ["cc-number"],
+          "confidence": 1.0,
+          "token": "[CARD]"
+        },
+        {
+          "id": "fin-card-text",
+          "description": "Credit card number in free text (13-19 digits, Luhn-plausible)",
+          "scope": "text",
+          "regex": "\\b(?:\\d[\\s\\-]?){13,19}\\b",
+          "regexFlags": "g",
+          "confidence": 0.75,
+          "token": "[CARD]"
+        },
+        {
+          "id": "fin-cvv-keyword",
+          "description": "CVV/CVC field by keyword",
+          "scope": "field",
+          "keywords": ["cvv", "cvc", "cvv2", "cvc2", "security-code", "securitycode", "card-csc", "sicherheitscode"],
+          "autocompleteHints": ["cc-csc"],
+          "confidence": 1.0,
+          "token": "[CVV]"
+        },
+        {
+          "id": "fin-expiry-keyword",
+          "description": "Card expiry field by keyword",
+          "scope": "field",
+          "keywords": ["expiry", "expiration", "exp-date", "cc-exp", "card-expiry", "ablaufdatum"],
+          "autocompleteHints": ["cc-exp", "cc-exp-month", "cc-exp-year"],
+          "confidence": 0.9,
+          "token": "[EXPIRY]"
+        },
+        {
+          "id": "fin-bank-keyword",
+          "description": "Bank account / routing number field",
+          "scope": "field",
+          "keywords": ["account-number", "accountnumber", "routing-number", "routingnumber", "iban", "swift", "bic", "sort-code", "bsb"],
+          "confidence": 0.9,
+          "token": "[BANK_ACCOUNT]"
+        }
+      ]
+    },
+    "government_id": {
+      "label": "Government ID",
+      "rules": [
+        {
+          "id": "gov-ssn-keyword",
+          "description": "SSN field by keyword",
+          "scope": "field",
+          "keywords": ["ssn", "social-security", "socialsecurity", "social_security", "sin-number", "national-insurance", "nino"],
+          "confidence": 1.0,
+          "token": "[SSN]"
+        },
+        {
+          "id": "gov-ssn-text",
+          "description": "SSN pattern in free text (xxx-xx-xxxx)",
+          "scope": "text",
+          "regex": "\\b\\d{3}[\\s\\-]\\d{2}[\\s\\-]\\d{4}\\b",
+          "regexFlags": "g",
+          "confidence": 0.9,
+          "token": "[SSN]"
+        },
+        {
+          "id": "gov-aadhaar-keyword",
+          "description": "Aadhaar number field by keyword",
+          "scope": "field",
+          "keywords": ["aadhaar", "aadhar", "aadhaar-number", "uid-number"],
+          "confidence": 1.0,
+          "token": "[AADHAAR]"
+        },
+        {
+          "id": "gov-aadhaar-text",
+          "description": "Aadhaar pattern in free text (12-digit with optional spaces)",
+          "scope": "text",
+          "regex": "\\b\\d{4}[\\s\\-]?\\d{4}[\\s\\-]?\\d{4}\\b",
+          "regexFlags": "g",
+          "confidence": 0.7,
+          "token": "[AADHAAR]"
+        },
+        {
+          "id": "gov-passport-keyword",
+          "description": "Passport number field by keyword",
+          "scope": "field",
+          "keywords": ["passport", "passport-number", "passnummer", "numéro de passeport"],
+          "confidence": 0.9,
+          "token": "[PASSPORT]"
+        },
+        {
+          "id": "gov-dl-keyword",
+          "description": "Drivers license field by keyword",
+          "scope": "field",
+          "keywords": ["drivers-license", "driver-license", "dl-number", "licence-number", "führerschein"],
+          "confidence": 0.9,
+          "token": "[DRIVERS_LICENSE]"
+        },
+        {
+          "id": "gov-tax-keyword",
+          "description": "Tax ID / TIN field by keyword",
+          "scope": "field",
+          "keywords": ["tax-id", "taxid", "tin", "tax-identification", "itin", "ein", "pan-number", "pan-card", "steuernummer"],
+          "confidence": 0.9,
+          "token": "[TAX_ID]"
+        }
+      ]
+    },
+    "health": {
+      "label": "Health Information",
+      "rules": [
+        {
+          "id": "health-mrn-keyword",
+          "description": "Medical record number field",
+          "scope": "field",
+          "keywords": ["mrn", "medical-record", "medical_record", "patient-id", "patient_id", "health-id"],
+          "confidence": 0.9,
+          "token": "[MEDICAL_ID]"
+        },
+        {
+          "id": "health-insurance-keyword",
+          "description": "Health insurance ID field",
+          "scope": "field",
+          "keywords": ["insurance-id", "insuranceid", "policy-number", "policynumber", "member-id", "memberid", "group-number", "versicherungsnummer"],
+          "confidence": 0.85,
+          "token": "[INSURANCE_ID]"
+        },
+        {
+          "id": "health-diagnosis-keyword",
+          "description": "Diagnosis / condition fields",
+          "scope": "field",
+          "keywords": ["diagnosis", "condition", "medication", "prescription", "allergies", "blood-type"],
+          "confidence": 0.8,
+          "token": "[HEALTH_INFO]"
+        }
+      ]
+    },
+    "name_address": {
+      "label": "Name & Address",
+      "rules": [
+        {
+          "id": "na-fullname-keyword",
+          "description": "Full name field",
+          "scope": "field",
+          "keywords": ["fullname", "full-name", "full_name", "nombre-completo", "nom-complet"],
+          "autocompleteHints": ["name"],
+          "confidence": 0.8,
+          "token": "[NAME]"
+        },
+        {
+          "id": "na-firstname-keyword",
+          "description": "First name field",
+          "scope": "field",
+          "keywords": ["firstname", "first-name", "first_name", "given-name", "givenname", "prénom", "vorname", "nombre"],
+          "autocompleteHints": ["given-name"],
+          "confidence": 0.7,
+          "token": "[FIRST_NAME]"
+        },
+        {
+          "id": "na-lastname-keyword",
+          "description": "Last name field",
+          "scope": "field",
+          "keywords": ["lastname", "last-name", "last_name", "family-name", "familyname", "surname", "nachname", "apellido", "nom"],
+          "autocompleteHints": ["family-name"],
+          "confidence": 0.7,
+          "token": "[LAST_NAME]"
+        },
+        {
+          "id": "na-address-keyword",
+          "description": "Street address field",
+          "scope": "field",
+          "keywords": ["address", "street-address", "streetaddress", "address-line1", "address-line2", "adresse", "dirección"],
+          "autocompleteHints": ["street-address", "address-line1", "address-line2"],
+          "confidence": 0.75,
+          "token": "[ADDRESS]"
+        },
+        {
+          "id": "na-dob-keyword",
+          "description": "Date of birth field",
+          "scope": "field",
+          "keywords": ["dob", "date-of-birth", "dateofbirth", "birthdate", "birthday", "geburtsdatum", "fecha-de-nacimiento"],
+          "autocompleteHints": ["bday"],
+          "confidence": 0.85,
+          "token": "[DOB]"
+        }
+      ]
+    }
+  },
+  "confidenceThresholds": {
+    "SENSITIVE_FIELD": 0.6,
+    "SENSITIVE_TEXT": 0.5
+  }
+}
