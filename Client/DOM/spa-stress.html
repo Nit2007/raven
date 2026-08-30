@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SafeScreen Test — SPA Stress</title>
+</head>
+<body>
+  <h1>SPA Stress Test</h1>
+  <div id="root"></div>
+  <script>
+    // Simulate a React-style virtual DOM patching that rapidly adds/removes elements
+    const root = document.getElementById('root');
+    let counter = 0;
+    
+    function render() {
+      root.innerHTML = '';
+      
+      const form = document.createElement('form');
+      
+      const emailGroup = document.createElement('div');
+      emailGroup.innerHTML = `<label>Email (Mutating):</label> <input type="email" value="test${counter}@example.com" />`;
+      form.appendChild(emailGroup);
+      
+      // Spam random DOM nodes to test mutation debounce
+      for (let i=0; i<50; i++) {
+        const div = document.createElement('div');
+        div.textContent = 'Tick: ' + counter + ' Item: ' + i;
+        form.appendChild(div);
+      }
+      
+      root.appendChild(form);
+      counter++;
+    }
+
+    render();
+    // Re-render entirely every 800ms
+    setInterval(render, 800);
+  </script>
+</body>
+</html>

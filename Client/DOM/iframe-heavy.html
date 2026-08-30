@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SafeScreen Test — Iframes</title>
+</head>
+<body>
+  <h1>Iframe Test</h1>
+  
+  <h2>Same-Origin Iframe (Traversable)</h2>
+  <iframe src="test-page.html" width="100%" height="300" style="border: 1px solid #ccc;"></iframe>
+
+  <h2>Cross-Origin Iframe (Opaque)</h2>
+  <!-- Example domain for cross origin testing -->
+  <iframe src="https://example.com" width="100%" height="300" style="border: 1px solid #ccc;"></iframe>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SafeScreen Test — Shadow DOM</title>
+</head>
+<body>
+  <h1>Shadow DOM Test</h1>
+  
+  <div id="open-host"></div>
+  <div id="closed-host"></div>
+
+  <script>
+    // Open Shadow DOM (Should be traversed successfully)
+    const openHost = document.getElementById('open-host');
+    const openRoot = openHost.attachShadow({ mode: 'open' });
+    openRoot.innerHTML = `
+      <style> p { color: blue; } </style>
+      <p>This is inside an OPEN shadow root.</p>
+      <input type="text" placeholder="Open shadow input (e.g. Card)" />
+    `;
+
+    // Closed Shadow DOM (Should be emitted as opaque-region)
+    const closedHost = document.getElementById('closed-host');
+    const closedRoot = closedHost.attachShadow({ mode: 'closed' });
+    closedRoot.innerHTML = `
+      <style> p { color: red; } </style>
+      <p>This is inside a CLOSED shadow root.</p>
+      <input type="password" value="secret" />
+    `;
+  </script>
+</body>
+</html>

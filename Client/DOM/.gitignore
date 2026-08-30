@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# ML models (large binaries — don't commit, document how to fetch instead)
+models/
+*.onnx
+*.bin
+*.safetensors
+
+# Python (finetune_ner.py env)
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Extension build artifacts
+*.crx
+*.pem
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Env/secrets
+.env
+.env.local
+HF_TOKEN*
+
+# Chrome extension packed output
+web-ext-artifacts/

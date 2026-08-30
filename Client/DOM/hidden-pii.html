@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SafeScreen Test — Hidden PII</title>
+  <style>
+    .zero-size {
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      border: none;
+    }
+    .zero-opacity {
+      opacity: 0;
+    }
+    .off-screen {
+      position: absolute;
+      left: -9999px;
+      top: -9999px;
+    }
+    .clipped {
+      clip-path: circle(0);
+    }
+    .aria-hidden {
+      /* visually visible but semantically hidden */
+    }
+  </style>
+</head>
+<body>
+  <h1>Hidden PII Test</h1>
+  
+  <p>The fields below are intentionally hidden using various CSS techniques to test the robust visibility algorithm.</p>
+
+  <div class="zero-size">
+    <input type="text" value="hidden.by.size@gmail.com" />
+  </div>
+
+  <div class="zero-opacity">
+    <input type="text" value="hidden.by.opacity@gmail.com" />
+  </div>
+
+  <div class="off-screen">
+    <input type="text" value="hidden.offscreen@gmail.com" />
+  </div>
+
+  <div class="clipped">
+    <input type="text" value="hidden.by.clip@gmail.com" />
+  </div>
+
+  <!-- Note: aria-hidden elements are NOT ignored, but flagged as ariaHidden: true -->
+  <div class="aria-hidden" aria-hidden="true">
+    <input type="password" value="visibleButAriaHidden" />
+    <span>(Visible, but aria-hidden="true")</span>
+  </div>
+
+  <div style="display: none;">
+    <input type="text" value="hidden.display.none@gmail.com" />
+  </div>
+
+  <div>
+    <input type="text" value="visible.regular@gmail.com" />
+    <span>(Regular visible field)</span>
+  </div>
+</body>
+</html>

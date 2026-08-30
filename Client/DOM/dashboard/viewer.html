@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SafeScreen — Live LLM Prompt Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0d0f14; --surface:#13161e; --surface2:#1a1e28; --border:#252a38;
+  --accent:#6366f1; --accent2:#22d3ee; --red:#f43f5e; --green:#10b981;
+  --yellow:#f59e0b; --text:#e2e8f0; --muted:#64748b;
+  --mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ---- Header ---- */
+header{background:linear-gradient(135deg,#1a1e2e,#13161e);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;flex-shrink:0;}
+.logo{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;}
+header h1{font-size:17px;font-weight:700;}
+header .sub{font-size:11px;color:var(--muted);display:block;}
+.live-badge{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
+.badge-text{font-size:11px;font-weight:600;color:var(--green);}
+.badge-idle{color:var(--muted);}
+.badge-idle .pulse-dot{background:var(--muted);animation:none;}
+#last-update{font-size:11px;color:var(--muted);margin-left:16px;}
+
+/* ---- Layout ---- */
+.body{display:grid;grid-template-columns:300px 1fr;flex:1;overflow:hidden;}
+
+/* ---- Sidebar ---- */
+.sidebar{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:var(--surface);}
+.sidebar-top{padding:14px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.sidebar-top h3{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:10px;}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.stat-card{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px;}
+.stat-card .val{font-size:22px;font-weight:700;}
+.stat-card .lbl{font-size:10px;color:var(--muted);}
+.v-red{color:var(--red)} .v-green{color:var(--green)} .v-yellow{color:var(--yellow)} .v-accent{color:var(--accent)}
+
+.el-scroll{flex:1;overflow-y:auto;padding:10px;}
+.el-scroll h3{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px;}
+.el-list{display:flex;flex-direction:column;gap:4px;}
+.el-item{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:9px 11px;cursor:pointer;transition:border-color .12s,background .12s;}
+.el-item:hover{border-color:var(--accent);background:#1e2236;}
+.el-item.active{border-color:var(--accent);background:rgba(99,102,241,.12);}
+.el-item-top{display:flex;align-items:center;gap:7px;}
+.el-tag{font-family:var(--mono);font-size:10px;background:rgba(99,102,241,.15);color:var(--accent);padding:2px 5px;border-radius:3px;}
+.el-name{font-size:11px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;text-transform:uppercase;}
+.b-high{background:rgba(244,63,94,.15);color:var(--red);border:1px solid rgba(244,63,94,.3);}
+.b-low{background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3);}
+.b-safe{background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3);}
+.el-token{font-family:var(--mono);font-size:10px;color:var(--red);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* ---- Main ---- */
+.main{display:flex;flex-direction:column;overflow:hidden;}
+.tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;}
+.tab{padding:12px 18px;font-size:12px;font-weight:500;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:color .12s,border-color .12s;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab-body{flex:1;overflow-y:auto;padding:20px;}
+
+/* ---- Prompt ---- */
+.prompt-wrap{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.prompt-hdr{padding:10px 18px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);}
+.prompt-hdr .tag{font-family:var(--mono);color:var(--accent);font-weight:600;font-size:12px;}
+.prompt-body{padding:18px;font-family:var(--mono);font-size:12px;line-height:1.85;white-space:pre-wrap;min-height:120px;}
+.t-redact{background:rgba(244,63,94,.15);color:var(--red);border:1px solid rgba(244,63,94,.25);border-radius:3px;padding:0 4px;font-weight:600;}
+.t-empty{background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.25);border-radius:3px;padding:0 4px;font-weight:600;}
+.t-safe{color:#94a3b8;}
+.t-hdr{color:var(--accent2);font-weight:600;}
+.t-comment{color:var(--muted);font-style:italic;}
+
+/* ---- Detail ---- */
+.det-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;}
+.det-card h4{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:7px 14px;font-size:12px;}
+.kv-k{color:var(--muted);font-size:11px;}
+.kv-v{font-family:var(--mono);color:var(--text);word-break:break-all;}
+
+/* ---- JSON ---- */
+.json-wrap{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.json-bar{padding:9px 14px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.json-bar span{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.copy-btn{background:var(--accent);color:#fff;border:none;padding:5px 13px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;}
+.copy-btn:hover{opacity:.85;}
+pre{padding:16px;font-family:var(--mono);font-size:11px;line-height:1.7;overflow-x:auto;}
+.j-key{color:#7dd3fc} .j-str{color:#86efac} .j-red{color:var(--red)} .j-num{color:#fbbf24} .j-bool{color:#c084fc}
+
+/* ---- Footer ---- */
+footer{padding:10px 20px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.btn{padding:7px 16px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .12s;}
+.btn:hover{opacity:.85;}
+.btn-p{background:linear-gradient(135deg,var(--accent),#818cf8);color:#fff;}
+.btn-g{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.foot-note{margin-left:auto;font-size:11px;color:var(--muted);}
+
+/* ---- Empty state ---- */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:12px;color:var(--muted);}
+.empty svg{opacity:.3;}
+.empty p{font-size:13px;}
+
+/* ---- Alert ---- */
+.alert{padding:10px 16px;border-radius:8px;font-size:12px;margin-bottom:14px;display:none;}
+.alert-warn{background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.3);color:var(--red);}
+
+::-webkit-scrollbar{width:5px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* new-item flash */
+@keyframes flash{0%{background:rgba(99,102,241,.25)}100%{background:var(--surface2)}}
+.el-item.new{animation:flash .6s ease-out}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🛡️</div>
+  <div>
+    <h1>SafeScreen — Live LLM Prompt Viewer</h1>
+    <span class="sub">Watching local WebSocket server (ws://localhost:3001) for live events</span>
+  </div>
+  <div class="live-badge badge-idle" id="live-badge">
+    <div class="pulse-dot"></div>
+    <span class="badge-text" id="live-text">Initializing WebSocket connection...</span>
+  </div>
+  <span id="last-update"></span>
+</header>
+
+<div class="tab-selector" id="tab-selector-bar" style="display:none; background:var(--surface2); border-bottom:1px solid var(--border); padding:8px 28px; display:flex; gap:10px; overflow-x:auto;">
+  <span style="font-size:11px; color:var(--muted); align-self:center; font-weight:600;">ACTIVE TABS:</span>
+  <div id="tab-buttons" style="display:flex; gap:8px;"></div>
+</div>
+
+<div class="body">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <h3>Scan Summary</h3>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="val v-accent" id="st-total">—</div><div class="lbl">Elements</div></div>
+        <div class="stat-card"><div class="val v-red"    id="st-sens">—</div><div class="lbl">Sensitive</div></div>
+        <div class="stat-card"><div class="val v-green"  id="st-safe">—</div><div class="lbl">Safe</div></div>
+        <div class="stat-card"><div class="val v-yellow" id="st-gate">—</div><div class="lbl">Gate</div></div>
+      </div>
+    </div>
+    <div class="el-scroll">
+      <h3>Classified Elements</h3>
+      <div class="el-list" id="el-list">
+        <div class="empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+          <p>Run a scan from the SafeScreen popup</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" data-tab="prompt">📤 LLM Prompt</div>
+      <div class="tab" data-tab="detail">🔍 Element Detail</div>
+      <div class="tab" data-tab="json">{ } Raw Payload</div>
+    </div>
+
+    <div class="tab-body" id="tab-prompt">
+      <div class="alert alert-warn" id="gate-alert">⚠ Outbound gate check FAILED — payload was blocked. See raw JSON for leak details.</div>
+      <div class="prompt-wrap">
+        <div class="prompt-hdr">
+          <span class="tag">SYSTEM CONTEXT PAYLOAD</span>
+          <span id="prompt-meta">No data yet</span>
+        </div>
+        <div class="prompt-body" id="prompt-body"><span class="t-comment"># Open any page and trigger Auto Redact or Analyze Page in the SafeScreen popup.
+# This viewer updates automatically every time a scan runs.</span></div>
+      </div>
+    </div>
+
+    <div class="tab-body" id="tab-detail" style="display:none">
+      <div id="detail-body">
+        <div class="empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/></svg>
+          <p>Click an element in the sidebar to inspect it</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-body" id="tab-json" style="display:none">
+      <div class="json-wrap">
+        <div class="json-bar">
+          <span id="json-filename">server_payload.json</span>
+          <button class="copy-btn" onclick="copyJson()">Copy JSON</button>
+        </div>
+        <pre id="json-body"><span style="color:var(--muted)">// Waiting for scan data…</span></pre>
+      </div>
+    </div>
+
+    <footer>
+      <button class="btn btn-g" onclick="clearData()">✕ Clear</button>
+      <button class="btn btn-g" onclick="exportPrompt()">⬇ Export Prompt</button>
+      <span class="foot-note" id="scan-meta">No scan yet</span>
+    </footer>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+var currentPayload = null;
+var selectedIdx    = null;
+var activeTabId    = null;
+
+// ---- Tab switching ----
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click', function(){ switchTab(t.dataset.tab); });
+});
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.tab===name); });
+  ['prompt','detail','json'].forEach(function(id){
+    document.getElementById('tab-'+id).style.display = id===name ? '' : 'none';
+  });
+}
+
+// ---- Live listener via WebSockets ----
+var ws = null;
+
+function connectWebSocket() {
+  try {
+    ws = new WebSocket('ws://127.0.0.1:3001');
+
+    ws.onopen = function() {
+      console.log('[SafeScreen] Connected to live viewer server');
+      if (!currentPayload) {
+        document.getElementById('live-text').textContent = '🟢 Connected — waiting for a scan';
+      }
+      document.getElementById('live-badge').classList.remove('badge-idle');
+    };
+
+    ws.onmessage = function(event) {
+      try {
+        var snap = JSON.parse(event.data);
+        if (snap) onNewScan(snap);
+      } catch (e) {
+        console.error('Failed to parse incoming scan:', e);
+      }
+    };
+
+    ws.onclose = function() {
+      console.log('[SafeScreen] WebSocket disconnected. Reconnecting in 3s...');
+      document.getElementById('live-text').textContent = '🔴 Disconnected — reconnecting in 3s...';
+      document.getElementById('live-badge').classList.add('badge-idle');
+      setTimeout(connectWebSocket, 3000);
+    };
+
+    ws.onerror = function() {
+      ws.close();
+    };
+  } catch (err) {
+    document.getElementById('live-text').textContent = '🔴 Disconnected (' + err.message + ')';
+    document.getElementById('live-badge').classList.add('badge-idle');
+  }
+}
+
+// Initial load
+connectWebSocket();
+
+function onNewScan(snap){
+  if (!snap) return;
+  currentPayload = snap;
+  var els = snap.classifiedElements || [];
+
+  // Header
+  var badge = document.getElementById('live-badge');
+  badge.classList.remove('badge-idle');
+  var ts = new Date(snap.timestamp).toLocaleTimeString();
+  var urlStr = (snap.url || 'unknown').slice(0, 40) + '...';
+  document.getElementById('live-text').textContent = '🟢 Connected — showing scan from ' + urlStr + ' at ' + ts;
+  document.getElementById('last-update').textContent = '';
+
+  // Stats
+  var summary = snap.summary || {};
+  document.getElementById('st-total').textContent = summary.totalElements || els.length;
+  document.getElementById('st-sens').textContent  = summary.sensitiveCount || 0;
+  document.getElementById('st-safe').textContent  = summary.safeCount || 0;
+  document.getElementById('st-gate').textContent  = summary.gateDecision === 'PASS' ? '✓' : '✗';
+
+  // Gate alert
+  var gateAlert = document.getElementById('gate-alert');
+  if (summary.gateDecision === 'FAIL'){
+    gateAlert.style.display = 'block';
+  } else {
+    gateAlert.style.display = 'none';
+  }
+
+  // Scan meta
+  document.getElementById('scan-meta').textContent =
+    (snap.url || '').slice(0,60) + ' · ' + els.length + ' elements';
+
+  renderSidebar(els);
+  renderPrompt(snap, els);
+  renderJson(snap);
+
+  // Re-render detail if one was selected
+  if (selectedIdx !== null && els[selectedIdx]) renderDetail(els[selectedIdx]);
+}
+
+// ---- Sidebar ----
+function renderSidebar(els){
+  if (!els || !els.length){
+    document.getElementById('el-list').innerHTML = '<div class="empty"><p>No elements in this scan</p></div>';
+    return;
+  }
+  var html = '';
+  els.forEach(function(el, i){
+    var isHigh = el.sensitivity === 'HIGH_CONFIDENCE_PII';
+    var isLow  = el.sensitivity === 'LOW_CONFIDENCE_PII';
+    var badgeCls = isHigh ? 'b-high' : isLow ? 'b-low' : 'b-safe';
+    var badgeTxt = isHigh ? 'HIGH PII' : isLow ? 'LOW PII' : 'SAFE';
+    var label = (el.labelText || el.visibleText || el.name || el.id || '(unnamed)').slice(0,30);
+    var token = el.redacted && el.value ? '<div class="el-token">' + esc(el.value) + '</div>' : '';
+    html += '<div class="el-item" data-idx="'+i+'" onclick="selectEl('+i+')">'
+          + '<div class="el-item-top"><span class="el-tag">&lt;'+el.tag+'&gt;</span>'
+          + '<span class="el-name">'+esc(label)+'</span>'
+          + '<span class="badge '+badgeCls+'">'+badgeTxt+'</span></div>'
+          + token
+          + '</div>';
+  });
+  document.getElementById('el-list').innerHTML = html;
+}
+
+window.selectEl = function(idx){
+  selectedIdx = idx;
+  document.querySelectorAll('.el-item').forEach(function(e){ e.classList.remove('active'); });
+  var node = document.querySelector('[data-idx="'+idx+'"]');
+  if (node) node.classList.add('active');
+  switchTab('detail');
+  if (currentPayload && currentPayload.classifiedElements)
+    renderDetail(currentPayload.classifiedElements[idx]);
+};
+
+function renderDetail(el){
+  if (!el){ return; }
+  var sensLabel = el.sensitivity === 'HIGH_CONFIDENCE_PII' ? '<span class="badge b-high">HIGH PII</span>'
+                : el.sensitivity === 'LOW_CONFIDENCE_PII'  ? '<span class="badge b-low">LOW PII</span>'
+                : '<span class="badge b-safe">SAFE</span>';
+  var html = card('Element', kv('Tag','&lt;'+el.tag+'&gt;')+kv('Type',el.type||'—')+kv('ID',el.id||'—')+kv('Name',el.name||'—')+kv('Label',el.labelText||'—')+kv('Interactive',el.interactive?'Yes':'No'))
+           + card('Classification', kv('Sensitivity',sensLabel)+kv('Rule Token',el.ruleToken?'<code style="color:var(--accent)">'+el.ruleToken+'</code>':'—')+kv('Policy',el.policyAction||'—')+kv('Redacted',el.redacted?'<span style="color:var(--red)">Yes</span>':'<span style="color:var(--green)">No</span>'))
+           + card('Value Sent to LLM', '<div style="font-family:var(--mono);font-size:12px;padding:10px;background:var(--surface2);border-radius:7px;border:1px solid var(--border);color:'+(el.redacted?'var(--red)':'var(--green)')+'">'+esc(el.value||el.visibleText||'(empty)')+'</div>');
+  if (el.boundingBox){
+    html += card('Bounding Box', kv('Position','x='+el.boundingBox.x+', y='+el.boundingBox.y)+kv('Size',el.boundingBox.width+'px × '+el.boundingBox.height+'px'));
+  }
+  document.getElementById('detail-body').innerHTML = html;
+}
+
+function card(title, inner){ return '<div class="det-card"><h4>'+title+'</h4><div class="kv">'+inner+'</div></div>'; }
+function kv(k,v){ return '<span class="kv-k">'+k+'</span><span class="kv-v">'+v+'</span>'; }
+
+// ---- Prompt ----
+function renderPrompt(snap, els){
+  document.getElementById('prompt-body').innerText = snap.llmPrompt || 'No prompt generated.';
+  document.getElementById('prompt-meta').textContent = (snap.llmPrompt ? snap.llmPrompt.split('\n').length : 0) + ' lines · ' + els.length + ' elements';
+}
+
+// ---- JSON ----
+function renderJson(snap){
+  var fname = (snap.url||'unknown').replace(/^https?:\/\//,'').slice(0,40);
+  document.getElementById('json-filename').textContent = fname + ' — payload.json';
+  var raw = JSON.stringify(snap, null, 2);
+  document.getElementById('json-body').innerHTML = colorizeJson(esc(raw));
+}
+function colorizeJson(s){
+  return s
+    .replace(/"([^"]+)":/g, '<span class="j-key">"$1"</span>:')
+    .replace(/: "(\{[^"]+\})"/g, ': <span class="j-red">"$1"</span>')
+    .replace(/: "([^"]+)"/g, ': <span class="j-str">"$1"</span>')
+    .replace(/: (true|false)/g, ': <span class="j-bool">$1</span>')
+    .replace(/: (\d+\.?\d*)/g, ': <span class="j-num">$1</span>');
+}
+
+// ---- Utilities ----
+window.copyJson = function(){
+  if (!currentPayload){ return; }
+  navigator.clipboard.writeText(JSON.stringify(currentPayload.rawPayload || currentPayload, null, 2)).then(function(){
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(function(){ btn.textContent = 'Copy JSON'; }, 1500);
+  });
+};
+window.exportPrompt = function(){
+  if (!currentPayload || !currentPayload.llmPrompt) return;
+  var a = document.createElement('a');
+  a.href = 'data:text/plain;charset=utf-8,'+encodeURIComponent(currentPayload.llmPrompt);
+  a.download = 'safescreen-prompt-'+currentPayload.tabId+'-'+Date.now()+'.txt';
+  a.click();
+};
+window.clearData = function(){
+  currentPayload = null; selectedIdx = null;
+  document.getElementById('el-list').innerHTML = '<div class="empty"><p>Cleared — run a new scan</p></div>';
+  document.getElementById('prompt-body').innerHTML = '<span class="t-comment"># Cleared. Trigger Auto Redact or Analyze Page to see new data.</span>';
+  document.getElementById('json-body').innerHTML = '<span style="color:var(--muted)">// No data</span>';
+  document.getElementById('st-total').textContent = '—';
+  document.getElementById('st-sens').textContent  = '—';
+  document.getElementById('st-safe').textContent  = '—';
+  document.getElementById('st-gate').textContent  = '—';
+  document.getElementById('scan-meta').textContent = 'No scan yet';
+  document.getElementById('last-update').textContent = '';
+  var badge = document.getElementById('live-badge');
+  if (!ws || ws.readyState !== 1) {
+    document.getElementById('live-text').textContent = '🔴 Disconnected';
+    badge.classList.add('badge-idle');
+  } else {
+    document.getElementById('live-text').textContent = '🟢 Connected — waiting for a scan';
+  }
+};
+function esc(s){ if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
