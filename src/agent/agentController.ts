@@ -5,7 +5,7 @@
  * Guarantees privacy enforcement on EVERY iteration.
  */
 
-import { ActionExecutor, ValidatedCommand, ExecutionResult } from './actionExecutor.js';
+import { ActionExecutor, ValidatedCommand, ActionReceipt } from './actionExecutor.js';
 import { Person1Bridge } from '../integration/person1Bridge.js';
 import { PerceptionAdapter, ElementInfo } from '../integration/perceptionAdapter.js';
 
@@ -36,6 +36,9 @@ export interface StepRecord {
   targetSelector?: string | null;
   message?: string;
   timestamp: string;
+  execution?: string;
+  dispatched?: boolean;
+  verified?: boolean;
 }
 
 export interface AgentControllerConfig {
@@ -84,7 +87,7 @@ export class AgentController {
   public async executeIteration(
     queryDomFn: () => Promise<ElementInfo[]>,
     runPerceptionFn: () => Promise<any>,
-    dispatchActionFn: (cmd: ValidatedCommand) => Promise<{ success: boolean; message?: string; error?: string }>,
+    dispatchActionFn: (cmd: ValidatedCommand) => Promise<ActionReceipt>,
     onStateChange?: (status: AgentStatus, message?: string) => void
   ): Promise<{ done: boolean; success: boolean; status: AgentStatus; message?: string }> {
 
@@ -183,7 +186,7 @@ export class AgentController {
 
     // Check if task is finished according to server response contract
     const isServerCompleted = (serverResponse.body?.task_status === 'completed') || (command.action === 'DONE');
-    if (isServerCompleted || (command.action === 'NONE' && currentStep > 1)) {
+    if (isServerCompleted) {
       this.status = 'COMPLETED';
       const msg = command.reasoning || `Task finished successfully in step ${currentStep}.`;
       onStateChange?.(this.status, msg);
@@ -197,7 +200,10 @@ export class AgentController {
         actionTaken: command.action,
         targetSelector: command.targetSelector,
         message: msg,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        execution: 'REAL_BROWSER',
+        dispatched: false,
+        verified: true
       });
 
       return { done: true, success: true, status: this.status, message: msg };
@@ -207,11 +213,11 @@ export class AgentController {
     this.status = 'EXECUTING';
     onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Executing ${command.action} on page...`);
 
-    const execResult: ExecutionResult = await ActionExecutor.executeValidatedAction(command, dispatchActionFn);
+    const execReceipt: ActionReceipt = await ActionExecutor.executeValidatedAction(command, dispatchActionFn);
 
-    if (!execResult.success) {
+    if (!execReceipt.success || !execReceipt.dispatched) {
       this.status = 'TASK_FAILED';
-      const msg = `Action execution failed: ${execResult.error || 'Unknown error'}`;
+      const msg = `Action execution failed: ${execReceipt.error || 'Execution dispatch failed'}`;
       onStateChange?.(this.status, msg);
       return { done: true, success: false, status: this.status, message: msg };
     }
@@ -224,18 +230,21 @@ export class AgentController {
       redactedCount: stepRedactedCount,
       actionTaken: command.action,
       targetSelector: command.targetSelector,
-      message: execResult.message,
-      timestamp: new Date().toISOString()
+      message: execReceipt.message,
+      timestamp: new Date().toISOString(),
+      execution: execReceipt.execution,
+      dispatched: execReceipt.dispatched,
+      verified: execReceipt.verified
     });
 
     // STEP 12: OBSERVING & PAGE STABILIZATION
     this.status = 'OBSERVING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Action executed (${execResult.message}). Waiting for page to stabilize...`);
+    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Action executed (${execReceipt.message}). Waiting for page to stabilize...`);
 
     await new Promise(r => setTimeout(r, this.stabilizeDelayMs));
 
     this.currentIteration++;
-    return { done: false, success: true, status: 'OBSERVING', message: execResult.message };
+    return { done: false, success: true, status: 'OBSERVING', message: execReceipt.message };
   }
 
   /**

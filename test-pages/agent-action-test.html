@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RAVEN M9.1 — Real Action Test Page</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; background: #0f0f17; color: #fff; }
+    .card { background: #1a1b26; padding: 24px; border-radius: 12px; border: 1px solid #2f334d; max-width: 500px; }
+    button { background: #7aa2f7; color: #0f0f17; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; }
+    button:hover { background: #89ddff; }
+    .status-box { margin-top: 20px; padding: 16px; border-radius: 6px; background: #24283b; font-size: 16px; font-weight: bold; border: 1px solid #414868; }
+    .status-success { background: #132a24; color: #73daca; border: 1px solid #73daca; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>RAVEN Real Browser Action Test</h2>
+    <p>Task: <strong>Click the Login button</strong></p>
+    
+    <button id="login-test">Login</button>
+    
+    <div id="status" class="status-box">Not logged in</div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('login-test');
+    const statusDiv = document.getElementById('status');
+
+    btn.addEventListener('click', () => {
+      statusDiv.textContent = 'Login button clicked successfully';
+      statusDiv.className = 'status-box status-success';
+    });
+  </script>
+</body>
+</html>

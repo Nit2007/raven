@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RAVEN M9.1 — Multi-Step Agent Execution Test</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; background: #0f0f17; color: #fff; }
+    .card { background: #1a1b26; padding: 24px; border-radius: 12px; border: 1px solid #2f334d; max-width: 500px; }
+    label { display: block; margin-bottom: 8px; font-weight: bold; color: #a9b1d6; }
+    input { width: 100%; padding: 12px; margin-bottom: 16px; border-radius: 6px; border: 1px solid #414868; background: #24283b; color: #fff; box-sizing: border-box; font-size: 15px; }
+    button { background: #bb9af7; color: #0f0f17; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; font-size: 15px; }
+    button:hover { background: #c0caf5; }
+    .results-box { margin-top: 20px; padding: 16px; border-radius: 6px; background: #24283b; border: 1px solid #414868; font-weight: bold; }
+    .results-success { background: #132a24; color: #73daca; border: 1px solid #73daca; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>RAVEN Multi-Step Agent Test Page</h2>
+    <p>Task: <strong>Enter SIH 2026 in the search box and submit the search.</strong></p>
+
+    <label for="search-input">Search Query</label>
+    <input type="text" id="search-input" placeholder="Type search term here..." />
+
+    <button id="search-submit">Submit Search</button>
+
+    <div id="results" class="results-box">No results yet</div>
+  </div>
+
+  <script>
+    const input = document.getElementById('search-input');
+    const btn = document.getElementById('search-submit');
+    const resultsDiv = document.getElementById('results');
+
+    btn.addEventListener('click', () => {
+      const val = input.value.trim();
+      if (val) {
+        resultsDiv.textContent = 'Search completed for: ' + val;
+        resultsDiv.className = 'results-box results-success';
+      } else {
+        resultsDiv.textContent = 'Please enter a query first!';
+      }
+    });
+  </script>
+</body>
+</html>

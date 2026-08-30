@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import path from 'node:path';
 import fs from 'node:fs';
 import { AgentController } from '../src/agent/agentController.js';
-import { ActionExecutor } from '../src/agent/actionExecutor.js';
+import { ActionExecutor, ActionReceipt } from '../src/agent/actionExecutor.js';
 import { PerceptionAdapter, ElementInfo } from '../src/integration/perceptionAdapter.js';
 
 // Load Person 1 IIFE modules safely into globalThis in Node.js test environment
@@ -27,6 +27,16 @@ const RedactionEngine = (globalThis as any).RedactionEngine;
 const Sanitizer = (globalThis as any).Sanitizer;
 const ServerAdapter = (globalThis as any).ServerAdapter;
 
+const createPassReceipt = (action: string, targetId: string | null = null, msg: string = 'Real action executed'): ActionReceipt => ({
+  success: true,
+  action,
+  target_element_id: targetId,
+  execution: 'REAL_BROWSER',
+  dispatched: true,
+  verified: true,
+  message: msg
+});
+
 describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite', () => {
 
   it('1. CLICK execution validator passes valid target and dispatches action', async () => {
@@ -39,10 +49,12 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
 
     const execRes = await ActionExecutor.executeValidatedAction(val.command, async (cmd) => {
       assert.strictEqual(cmd.action, 'CLICK');
-      return { success: true, message: 'Submit button clicked' };
+      return createPassReceipt('CLICK', 'btn-submit', 'Submit button clicked');
     });
 
     assert.strictEqual(execRes.success, true);
+    assert.strictEqual(execRes.dispatched, true);
+    assert.strictEqual(execRes.execution, 'REAL_BROWSER');
     assert.strictEqual(execRes.message, 'Submit button clicked');
   });
 
@@ -57,10 +69,11 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
 
     const execRes = await ActionExecutor.executeValidatedAction(val.command, async (cmd) => {
       assert.strictEqual(cmd.value, 'SIH 2026');
-      return { success: true, message: 'Typed "SIH 2026" into target' };
+      return createPassReceipt('TYPE', 'input-query', 'Typed "SIH 2026" into target');
     });
 
     assert.strictEqual(execRes.success, true);
+    assert.strictEqual(execRes.dispatched, true);
   });
 
   it('3. SCROLL execution validator passes and dispatches scroll', async () => {
@@ -72,10 +85,11 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     assert.strictEqual(val.command.action, 'SCROLL');
 
     const execRes = await ActionExecutor.executeValidatedAction(val.command, async () => {
-      return { success: true, message: 'Scrolled page' };
+      return createPassReceipt('SCROLL', 'footer-link', 'Scrolled page');
     });
 
     assert.strictEqual(execRes.success, true);
+    assert.strictEqual(execRes.dispatched, true);
   });
 
   it('4. SELECT execution validator passes option selection', async () => {
@@ -88,10 +102,11 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
 
     const execRes = await ActionExecutor.executeValidatedAction(val.command, async (cmd) => {
       assert.strictEqual(cmd.value, 'India');
-      return { success: true, message: 'Selected "India"' };
+      return createPassReceipt('SELECT', 'country-select', 'Selected "India"');
     });
 
     assert.strictEqual(execRes.success, true);
+    assert.strictEqual(execRes.dispatched, true);
   });
 
   it('5. Invalid target rejection catches non-existent element IDs', () => {
@@ -141,7 +156,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const iter = await controller.executeIteration(
       async () => [{ tag: 'div', visibleText: 'Test' }],
       async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] }),
-      async () => ({ success: true })
+      async () => createPassReceipt('NONE')
     );
 
     ServerAdapter.sendToServer = origSend;
@@ -162,7 +177,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
 
     const mockDom = async () => [{ tag: 'div', id: 'box', visibleText: 'Page Box' }];
     const mockPerception = async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] });
-    const mockDispatch = async () => ({ success: true, message: 'Scrolled' });
+    const mockDispatch = async () => createPassReceipt('SCROLL', null, 'Scrolled');
 
     // Step 1
     const res1 = await controller.executeIteration(mockDom, mockPerception, mockDispatch);
@@ -203,7 +218,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
       async () => {
         // Navigation occurs! Page 2 loaded
         currentDom = [{ tag: 'button', id: 'btn-submit-page2', visibleText: 'Submit Form 2', interactive: true }];
-        return { success: true, message: 'Navigated to Page 2' };
+        return createPassReceipt('CLICK', 'link-page2', 'Navigated to Page 2');
       }
     );
 
@@ -226,7 +241,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
 
     const mockDom = async () => [{ tag: 'button', id: 'btn-1', visibleText: 'Next', interactive: true }];
     const mockPerception = async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] });
-    const mockDispatch = async () => ({ success: true });
+    const mockDispatch = async () => createPassReceipt('CLICK', 'btn-1', 'Clicked');
 
     await controller.executeIteration(mockDom, mockPerception, mockDispatch);
     await controller.executeIteration(mockDom, mockPerception, mockDispatch);
@@ -292,7 +307,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const step1 = await controller.executeIteration(
       async () => currentDomState,
       mockPerception,
-      async (cmd) => ({ success: true, message: `Typed "${cmd.value}" into search-box` })
+      async (cmd) => createPassReceipt('TYPE', 'search-box', `Typed "${cmd.value}" into search-box`)
     );
     assert.strictEqual(step1.done, false);
 
@@ -300,7 +315,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const step2 = await controller.executeIteration(
       async () => currentDomState,
       mockPerception,
-      async () => ({ success: true, message: 'Search button clicked' })
+      async () => createPassReceipt('CLICK', 'search-btn', 'Search button clicked')
     );
     assert.strictEqual(step2.done, false);
 
@@ -308,7 +323,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const step3 = await controller.executeIteration(
       async () => currentDomState,
       mockPerception,
-      async () => ({ success: true })
+      async () => createPassReceipt('DONE')
     );
 
     ServerAdapter.sendToServer = origSend;
@@ -332,7 +347,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const res = await controller.executeIteration(
       async () => [{ tag: 'div', id: 'real-container', visibleText: 'Text' }],
       async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] }),
-      async () => ({ success: true })
+      async () => createPassReceipt('CLICK', 'ghost-button-777')
     );
 
     ServerAdapter.sendToServer = origSend;
@@ -355,7 +370,7 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     const res = await controller.executeIteration(
       async () => [{ tag: 'h1', visibleText: 'Submission Successful' }],
       async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] }),
-      async () => ({ success: true })
+      async () => createPassReceipt('DONE')
     );
 
     ServerAdapter.sendToServer = origSend;
@@ -364,5 +379,28 @@ describe('RAVEN M9 — Full Autonomous Browser Agent Execution Loop Test Suite',
     assert.strictEqual(res.success, true);
     assert.strictEqual(res.status, 'COMPLETED');
     assert.ok(res.message?.includes('Form submitted and confirmation text verified'));
+  });
+
+  it('17. Completion Honesty — Dispatched action does NOT mark task completed until re-observation confirms', async () => {
+    const controller = new AgentController({ maxIterations: 5, stabilizeDelayMs: 1 });
+    controller.initTask('Click login button');
+
+    const origSend = ServerAdapter.sendToServer;
+    ServerAdapter.sendToServer = () => Promise.resolve({
+      ok: true, status: 200,
+      body: { session_id: 'ss-honesty', action: { action_type: 'click', target_element_id: 'login-btn' }, task_status: 'in_progress' }
+    });
+
+    const res = await controller.executeIteration(
+      async () => [{ tag: 'button', id: 'login-btn', visibleText: 'Login' }],
+      async () => ({ schemaVersion: '1.0.0', status: 'SUCCESS', detections: [] }),
+      async () => createPassReceipt('CLICK', 'login-btn', 'Real click dispatched')
+    );
+
+    ServerAdapter.sendToServer = origSend;
+
+    assert.strictEqual(res.done, false); // Must NOT be done on step 1! Must re-observe page.
+    assert.strictEqual(res.status, 'OBSERVING');
+    assert.strictEqual(controller.executionHistory[0].dispatched, true);
   });
 });

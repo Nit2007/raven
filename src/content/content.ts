@@ -1,6 +1,6 @@
 /**
  * Content script running inside web pages.
- * Handles DOM element extraction for analysis and strict browser action execution.
+ * Handles DOM element extraction for analysis and strict real browser action execution.
  */
 
 (() => {
@@ -108,31 +108,40 @@
     return null;
   }
 
-  // Strictly execute validated browser action
+  // Strictly execute validated browser action and return ActionReceipt
   function executeValidatedAction(command: any) {
     const actionType = String(command.action || 'NONE').toUpperCase();
     const targetSelector = command.targetSelector || null;
     const value = command.value || null;
 
-    if (actionType === 'NONE') {
-      return { success: true, message: 'No action required' };
+    if (actionType === 'NONE' || actionType === 'DONE') {
+      return {
+        success: true,
+        action: actionType,
+        target_element_id: targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: false,
+        verified: true,
+        message: actionType === 'DONE' ? 'Task finished by server decision' : 'No browser action required'
+      };
     }
 
     const targetEl = findTargetElement(targetSelector);
 
     if (actionType === 'CLICK') {
       if (!targetEl) {
-        // Fallback: try finding first submit button if target is submit-like
-        const fallbackBtn = document.querySelector('button[type="submit"], input[type="submit"], button') as HTMLElement;
-        if (fallbackBtn) {
-          fallbackBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          fallbackBtn.focus();
-          fallbackBtn.click();
-          return { success: true, message: `Clicked fallback button "${fallbackBtn.textContent?.trim() || 'Submit'}"` };
-        }
-        return { success: false, error: `Target element "${targetSelector}" not found for CLICK` };
+        return {
+          success: false,
+          action: 'CLICK',
+          target_element_id: targetSelector,
+          execution: 'REAL_BROWSER',
+          dispatched: false,
+          verified: false,
+          error: `Target element "${targetSelector}" not found in current live DOM state`
+        };
       }
 
+      // Scroll into view & focus
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       targetEl.focus();
 
@@ -152,12 +161,28 @@
       }
 
       const label = targetEl.textContent?.trim() || (targetEl as HTMLInputElement).value || targetSelector || 'element';
-      return { success: true, message: `${label} clicked` };
+      return {
+        success: true,
+        action: 'CLICK',
+        target_element_id: targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: true,
+        verified: true,
+        message: `Real click dispatched on element "${label}"`
+      };
     }
 
     if (actionType === 'TYPE') {
       if (!targetEl) {
-        return { success: false, error: `Target element "${targetSelector}" not found for TYPE` };
+        return {
+          success: false,
+          action: 'TYPE',
+          target_element_id: targetSelector,
+          execution: 'REAL_BROWSER',
+          dispatched: false,
+          verified: false,
+          error: `Target element "${targetSelector}" not found in current live DOM state`
+        };
       }
 
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -167,7 +192,15 @@
       targetEl.dispatchEvent(new Event('input', { bubbles: true }));
       targetEl.dispatchEvent(new Event('change', { bubbles: true }));
 
-      return { success: true, message: `Typed "${value || ''}" into target` };
+      return {
+        success: true,
+        action: 'TYPE',
+        target_element_id: targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: true,
+        verified: true,
+        message: `Typed "${value || ''}" into "${targetSelector}"`
+      };
     }
 
     if (actionType === 'SCROLL') {
@@ -176,12 +209,28 @@
       } else {
         window.scrollBy({ top: 300, behavior: 'smooth' });
       }
-      return { success: true, message: 'Scrolled page' };
+      return {
+        success: true,
+        action: 'SCROLL',
+        target_element_id: targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: true,
+        verified: true,
+        message: 'Scrolled page'
+      };
     }
 
     if (actionType === 'SELECT') {
       if (!targetEl || targetEl.tagName.toLowerCase() !== 'select') {
-        return { success: false, error: `Target element "${targetSelector}" is not a valid <select> element` };
+        return {
+          success: false,
+          action: 'SELECT',
+          target_element_id: targetSelector,
+          execution: 'REAL_BROWSER',
+          dispatched: false,
+          verified: false,
+          error: `Target element "${targetSelector}" is not a valid <select> element`
+        };
       }
 
       const selectEl = targetEl as HTMLSelectElement;
@@ -198,10 +247,26 @@
       }
 
       selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, message: matched ? `Selected "${value}"` : `Selected option on target` };
+      return {
+        success: true,
+        action: 'SELECT',
+        target_element_id: targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: true,
+        verified: true,
+        message: matched ? `Selected "${value}" in <select>` : `Selected option on target`
+      };
     }
 
-    return { success: false, error: `Unsupported action type: ${actionType}` };
+    return {
+      success: false,
+      action: actionType,
+      target_element_id: targetSelector,
+      execution: 'REAL_BROWSER',
+      dispatched: false,
+      verified: false,
+      error: `Unsupported action type: ${actionType}`
+    };
   }
 
   // Global listener for runtime messages from Popup & Background worker
@@ -221,7 +286,15 @@
         const result = executeValidatedAction(message.command);
         sendResponse(result);
       } catch (err) {
-        sendResponse({ success: false, error: String(err) });
+        sendResponse({
+          success: false,
+          action: message.command?.action || 'UNKNOWN',
+          target_element_id: message.command?.targetSelector || null,
+          execution: 'REAL_BROWSER',
+          dispatched: false,
+          verified: false,
+          error: String(err)
+        });
       }
       return true;
     }

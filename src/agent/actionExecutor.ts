@@ -3,6 +3,7 @@
  *
  * Implements real browser actions: CLICK, TYPE, SCROLL, SELECT, NONE/DONE.
  * Enforces anti-hallucination checks, stale target rejection, and blocks arbitrary JS execution.
+ * Guarantees real action receipts (never mock success).
  */
 
 export interface ValidatedCommand {
@@ -19,12 +20,15 @@ export interface ActionValidationResult {
   command: ValidatedCommand;
 }
 
-export interface ExecutionResult {
+export interface ActionReceipt {
   success: boolean;
+  action: string;
+  target_element_id: string | null;
+  execution: 'REAL_BROWSER';
+  dispatched: boolean;
+  verified: boolean;
   message?: string;
   error?: string;
-  actionType: string;
-  targetSelector: string | null;
 }
 
 export class ActionExecutor {
@@ -103,36 +107,45 @@ export class ActionExecutor {
   }
 
   /**
-   * Execute validated action via content script message dispatcher.
+   * Execute validated action via real content script message dispatcher.
    */
   public static async executeValidatedAction(
     command: ValidatedCommand,
-    dispatcherFn: (cmd: ValidatedCommand) => Promise<{ success: boolean; message?: string; error?: string }>
-  ): Promise<ExecutionResult> {
+    dispatcherFn: (cmd: ValidatedCommand) => Promise<ActionReceipt>
+  ): Promise<ActionReceipt> {
     if (command.action === 'NONE' || command.action === 'DONE') {
       return {
         success: true,
-        message: command.action === 'DONE' ? 'Task completed by server' : 'No action required',
-        actionType: command.action,
-        targetSelector: command.targetSelector
+        action: command.action,
+        target_element_id: command.targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: false,
+        verified: true,
+        message: command.action === 'DONE' ? 'Task completed by server decision' : 'No browser action required'
       };
     }
 
     try {
       const res = await dispatcherFn(command);
       return {
-        success: res.success,
-        message: res.message || `${command.action} executed`,
-        error: res.error,
-        actionType: command.action,
-        targetSelector: command.targetSelector
+        success: Boolean(res.success && res.dispatched),
+        action: command.action,
+        target_element_id: command.targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: Boolean(res.dispatched),
+        verified: Boolean(res.verified),
+        message: res.message || `Real ${command.action} action executed on webpage`,
+        error: res.error
       };
     } catch (err) {
       return {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
-        actionType: command.action,
-        targetSelector: command.targetSelector
+        action: command.action,
+        target_element_id: command.targetSelector,
+        execution: 'REAL_BROWSER',
+        dispatched: false,
+        verified: false,
+        error: err instanceof Error ? err.message : String(err)
       };
     }
   }

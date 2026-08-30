@@ -6,7 +6,7 @@ import { PerceptionAdapter, ElementInfo } from '../integration/perceptionAdapter
 import { Person1Bridge } from '../integration/person1Bridge.js';
 import { DetectionResult } from '../schema/detection.js';
 import { AgentController, AgentStatus } from '../agent/agentController.js';
-import { ValidatedCommand } from '../agent/actionExecutor.js';
+import { ValidatedCommand, ActionReceipt } from '../agent/actionExecutor.js';
 
 const captureManager = new CaptureManager();
 const pipeline = new LocalPerceptionPipeline();
@@ -214,21 +214,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       headerStatusDot.textContent = `● Executing`;
       statusIcon.textContent = '⚙️';
       statusHeading.textContent = 'EXECUTING';
-      statusDesc.textContent = message || 'Executing action on page...';
+      statusDesc.textContent = message || 'Executing real action on browser page...';
     } else if (state === 'OBSERVING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
       headerStatusDot.textContent = `● Re-Observing`;
       statusIcon.textContent = '🔍';
       statusHeading.textContent = 'RE-OBSERVING PAGE';
-      statusDesc.textContent = message || 'Waiting for page to stabilize after action execution...';
+      statusDesc.textContent = message || 'Action executed. Re-observing new page state...';
     } else if (state === 'COMPLETED') {
       statusCard.classList.add('status-card-safe');
       headerStatusDot.className = 'status-dot dot-protected';
       headerStatusDot.textContent = '● Completed';
       statusIcon.textContent = '🎉';
       statusHeading.textContent = 'TASK COMPLETED';
-      statusDesc.textContent = message || 'Task completed successfully.';
+      statusDesc.textContent = message || 'Task verified and completed.';
     } else if (state === 'TRANSMISSION_BLOCKED') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
@@ -261,12 +261,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       headerStatusDot.className = 'status-dot dot-blocked';
       headerStatusDot.textContent = '● Action Rejected';
       statusIcon.textContent = '🚫';
-      statusHeading.textContent = 'ACTION REJECTED';
-      statusDesc.textContent = message || 'Unsafe or hallucinated action was rejected by RAVEN validator.';
+      statusHeading.textContent = state === 'TARGET_NOT_FOUND' ? 'TARGET NOT FOUND' : 'ACTION REJECTED';
+      statusDesc.textContent = message || 'Target element was not found in current live page state.';
 
       serverStatusBadge.className = 'status-dot dot-blocked';
       serverStatusBadge.textContent = '● Rejected';
-      serverNotice.textContent = '🔴 Unsafe server command rejected';
+      serverNotice.textContent = '🔴 Unsafe or missing target rejected';
       serverNotice.style.color = 'var(--error-color)';
     } else if (state === 'MAX_STEPS_REACHED') {
       statusCard.classList.add('status-card-blocked');
@@ -340,23 +340,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   };
 
-  // Dispatch action to content script
-  const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<{ success: boolean; message?: string; error?: string }> => {
+  // Dispatch action to content script — Strict real browser dispatch, NO MOCK FALLBACK
+  const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<ActionReceipt> => {
     return new Promise((resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
-        resolve({ success: true, message: `Mock executed ${command.action}` });
+        resolve({
+          success: false,
+          action: command.action,
+          target_element_id: command.targetSelector,
+          execution: 'REAL_BROWSER',
+          dispatched: false,
+          verified: false,
+          error: 'Active browser tab unavailable (chrome.tabs undefined)'
+        });
         return;
       }
 
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0 || !tabs[0].id) {
-          resolve({ success: true, message: `Mock executed ${command.action}` });
+          resolve({
+            success: false,
+            action: command.action,
+            target_element_id: command.targetSelector,
+            execution: 'REAL_BROWSER',
+            dispatched: false,
+            verified: false,
+            error: 'No active browser tab found'
+          });
           return;
         }
 
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXECUTE_ACTION', command }, (response) => {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXECUTE_ACTION', command }, (response: ActionReceipt) => {
           if (chrome.runtime.lastError || !response) {
-            resolve({ success: true, message: `Executed ${command.action} on page` });
+            const errMsg = chrome.runtime.lastError ? chrome.runtime.lastError.message : 'No response from webpage content script';
+            resolve({
+              success: false,
+              action: command.action,
+              target_element_id: command.targetSelector,
+              execution: 'REAL_BROWSER',
+              dispatched: false,
+              verified: false,
+              error: `Failed to dispatch action to active webpage: ${errMsg}`
+            });
           } else {
             resolve(response);
           }
@@ -368,9 +393,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function getFallbackDomElements(): ElementInfo[] {
     return [
       { tag: 'input', type: 'text', name: 'fullname', id: 'name-id', labelText: 'Full Name', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
-      { tag: 'input', type: 'email', name: 'email', id: 'email-id', labelText: 'Email Address', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } },
-      { tag: 'input', type: 'tel', name: 'phone', id: 'phone-id', labelText: 'Phone Number', value: '+91 98765 43210', boundingBox: { x: 50, y: 200, width: 200, height: 30 } },
-      { tag: 'button', type: 'submit', name: 'submit', id: 'btn-submit', visibleText: 'Submit', boundingBox: { x: 50, y: 260, width: 120, height: 35 }, interactive: true }
+      { tag: 'input', type: 'email', name: 'user_email', id: 'email-id', labelText: 'Email', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } },
+      { tag: 'button', type: 'submit', id: 'submit-btn', visibleText: 'Submit Form', boundingBox: { x: 50, y: 200, width: 100, height: 40 } }
     ];
   }
 
@@ -447,26 +471,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(3, Math.round(bboxOverlay.width / 400));
       ctx.strokeRect(x, y, width, height);
-
-      ctx.fillStyle = color;
-      const fontSize = Math.max(12, Math.round(bboxOverlay.width / 65));
-      ctx.font = `bold ${fontSize}px sans-serif`;
-
-      let labelText = `FACE #${idx + 1}`;
-      if (det.type === 'OCR_TEXT') {
-        labelText = `TEXT: "${det.metadata?.text || 'Region'}"`;
-      } else if (det.type === 'PII_CANDIDATE') {
-        const meta = det.metadata as PiiDetectionMetadata;
-        labelText = `PII: ${meta.category}`;
-      } else if (det.type === 'VISUAL_REGION') {
-        labelText = `VISUAL: ${det.metadata?.category || 'OBJECT'}`;
-      }
-
-      const textWidth = ctx.measureText(labelText).width;
-      ctx.fillRect(x, Math.max(0, y - fontSize - 4), textWidth + 8, fontSize + 4);
-
-      ctx.fillStyle = '#11111b';
-      ctx.fillText(labelText, x + 4, Math.max(fontSize, y - 4));
     });
   }
 });
