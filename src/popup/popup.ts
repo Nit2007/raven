@@ -2,16 +2,15 @@ import { CaptureManager } from '../perception/capture/captureManager.js';
 import { LocalFaceDetector } from '../perception/face/faceDetector.js';
 import { PerceptionInput } from '../perception/input/perceptionInput.js';
 import { LocalOcrEngine } from '../perception/ocr/ocrEngine.js';
-import { OcrTokenNormalizer } from '../perception/ocr/ocrTokenNormalizer.js';
 import { LocalPerceptionPipeline } from '../perception/perceptionPipeline.js';
 import { PiiCandidateDetector, PiiDetectionMetadata } from '../perception/pii/piiDetector.js';
 import { LocalVisualObjectDetector } from '../perception/vision/visualObjectDetector.js';
+import { PerceptionAdapter } from '../integration/perceptionAdapter.js';
 import { DetectionResult } from '../schema/detection.js';
 
 const captureManager = new CaptureManager();
 const faceDetector = new LocalFaceDetector();
 const ocrEngine = new LocalOcrEngine();
-const tokenNormalizer = new OcrTokenNormalizer();
 const piiDetector = new PiiCandidateDetector();
 const visualDetector = new LocalVisualObjectDetector();
 const pipeline = new LocalPerceptionPipeline();
@@ -27,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const detectPiiBtn = document.getElementById('detectPiiBtn') as HTMLButtonElement;
   const detectVisionBtn = document.getElementById('detectVisionBtn') as HTMLButtonElement;
   const runUnifiedBtn = document.getElementById('runUnifiedBtn') as HTMLButtonElement;
+  const runIntegratedBtn = document.getElementById('runIntegratedBtn') as HTMLButtonElement;
 
   const statusEl = document.getElementById('captureStatus') as HTMLSpanElement;
   const dimensionsEl = document.getElementById('imgDimensions') as HTMLSpanElement;
@@ -43,7 +43,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const visualWrapper = document.getElementById('visualWrapper') as HTMLDivElement;
   const previewImg = document.getElementById('capturePreview') as HTMLImageElement;
   const bboxOverlay = document.getElementById('bboxOverlay') as HTMLCanvasElement;
-  const detectionListEl = document.getElementById('detectionList') as HTMLDivElement;
   const errorBox = document.getElementById('errorBox') as HTMLDivElement;
 
   const timingPanel = document.getElementById('timingPanel') as HTMLDivElement;
@@ -57,6 +56,34 @@ document.addEventListener('DOMContentLoaded', () => {
   const tFusionEl = document.getElementById('tFusion') as HTMLSpanElement;
   const tTotalEl = document.getElementById('tTotal') as HTMLSpanElement;
 
+  const integrationBox = document.getElementById('integrationBox') as HTMLDivElement;
+  const p1RedactedCountEl = document.getElementById('p1RedactedCount') as HTMLSpanElement;
+  const p1OutboundStatusEl = document.getElementById('p1OutboundStatus') as HTMLSpanElement;
+  const p1WireStatusEl = document.getElementById('p1WireStatus') as HTMLSpanElement;
+
+  // Tabs & Views
+  const tabDetectionsBtn = document.getElementById('tabDetectionsBtn') as HTMLButtonElement;
+  const tabRedactedBtn = document.getElementById('tabRedactedBtn') as HTMLButtonElement;
+  const tabJsonBtn = document.getElementById('tabJsonBtn') as HTMLButtonElement;
+
+  const detectionsView = document.getElementById('detectionsView') as HTMLDivElement;
+  const redactedView = document.getElementById('redactedView') as HTMLDivElement;
+  const jsonView = document.getElementById('jsonView') as HTMLDivElement;
+
+  const switchTab = (activeTab: 'DETECTIONS' | 'REDACTED' | 'JSON') => {
+    tabDetectionsBtn.className = `tab-btn ${activeTab === 'DETECTIONS' ? 'active' : ''}`;
+    tabRedactedBtn.className = `tab-btn ${activeTab === 'REDACTED' ? 'active' : ''}`;
+    tabJsonBtn.className = `tab-btn ${activeTab === 'JSON' ? 'active' : ''}`;
+
+    detectionsView.style.display = activeTab === 'DETECTIONS' ? 'block' : 'none';
+    redactedView.style.display = activeTab === 'REDACTED' ? 'block' : 'none';
+    jsonView.style.display = activeTab === 'JSON' ? 'block' : 'none';
+  };
+
+  tabDetectionsBtn.addEventListener('click', () => switchTab('DETECTIONS'));
+  tabRedactedBtn.addEventListener('click', () => switchTab('REDACTED'));
+  tabJsonBtn.addEventListener('click', () => switchTab('JSON'));
+
   captureBtn.addEventListener('click', async () => {
     errorBox.style.display = 'none';
     statusEl.textContent = 'CAPTURING...';
@@ -67,6 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
     detectPiiBtn.disabled = true;
     detectVisionBtn.disabled = true;
     runUnifiedBtn.disabled = true;
+    runIntegratedBtn.disabled = true;
 
     const tStart = performance.now();
     try {
@@ -89,12 +117,15 @@ document.addEventListener('DOMContentLoaded', () => {
         detectPiiBtn.disabled = false;
         detectVisionBtn.disabled = false;
         runUnifiedBtn.disabled = false;
+        runIntegratedBtn.disabled = false;
 
         clearOverlay();
         countsEl.textContent = 'Ready for Local ML';
         tCaptureEl.textContent = `${lastCaptureTimeMs} ms`;
         timingPanel.style.display = 'block';
-        detectionListEl.style.display = 'none';
+        integrationBox.style.display = 'none';
+
+        detectionsView.innerHTML = `<div>Viewport captured successfully. Click a detection button to run local ML.</div>`;
       } else {
         statusEl.textContent = 'FAILED';
         statusEl.className = 'status-val status-error';
@@ -127,7 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
         countsEl.textContent = `Faces: ${response.detections.length}`;
         tFaceEl.textContent = `${faceTimeMs} ms`;
         tTotalEl.textContent = `${lastCaptureTimeMs + faceTimeMs} ms`;
-        renderDetections(response.detections, 'FACE');
+        renderDetections(response.detections);
       } else {
         errorBox.textContent = response.error || 'Face detection failed.';
         errorBox.style.display = 'block';
@@ -165,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
         countsEl.textContent = `Text Regions: ${response.detections.length}`;
         tOcrInferenceEl.textContent = `${response.latencyMs} ms`;
         tTotalEl.textContent = `${totalTimeMs} ms`;
-        renderDetections(response.detections, 'OCR_TEXT');
+        renderDetections(response.detections);
       } else {
         errorBox.textContent = response.error || 'Local OCR failed.';
         errorBox.style.display = 'block';
@@ -197,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
       countsEl.textContent = `PII Candidates: ${piiCandidates.length}`;
       tPiiEl.textContent = `${totalTimeMs} ms`;
       tTotalEl.textContent = `${totalTimeMs} ms`;
-      renderDetections(piiCandidates, 'PII_CANDIDATE');
+      renderDetections(piiCandidates);
     } catch (err) {
       errorBox.textContent = err instanceof Error ? err.message : String(err);
       errorBox.style.display = 'block';
@@ -220,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
       countsEl.textContent = `Visual Objects: ${response.detections.length} (${response.capabilityStatus})`;
       tVisionEl.textContent = `${visionTimeMs} ms`;
       tTotalEl.textContent = `${lastCaptureTimeMs + visionTimeMs} ms`;
-      renderDetections(response.detections, 'VISUAL_REGION');
+      renderDetections(response.detections);
     } catch (err) {
       errorBox.textContent = err instanceof Error ? err.message : String(err);
       errorBox.style.display = 'block';
@@ -229,12 +260,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // M5/M6 Unified Perception Result Handler
+  // Person 2 Unified Perception Result
   runUnifiedBtn.addEventListener('click', async () => {
     if (!currentInput) return;
 
     runUnifiedBtn.disabled = true;
-    countsEl.textContent = 'EXECUTING UNIFIED PERCEPTION (M6)...';
+    countsEl.textContent = 'EXECUTING UNIFIED PERCEPTION (P2)...';
 
     try {
       const unifiedResult = await pipeline.runLocalPerception(currentInput, previewImg);
@@ -273,13 +304,92 @@ document.addEventListener('DOMContentLoaded', () => {
       tTotalEl.textContent = `${lastCaptureTimeMs + unifiedResult.timing.totalMs} ms`;
       timingPanel.style.display = 'block';
 
-      // Render Fused Detections
-      renderDetections(unifiedResult.detections, 'UNIFIED');
+      renderDetections(unifiedResult.detections);
     } catch (err) {
       errorBox.textContent = err instanceof Error ? err.message : String(err);
       errorBox.style.display = 'block';
     } finally {
       runUnifiedBtn.disabled = false;
+    }
+  });
+
+  // FULL PERSON 1 + PERSON 2 INTEGRATED PIPELINE RUNNER
+  runIntegratedBtn.addEventListener('click', async () => {
+    if (!currentInput) return;
+
+    runIntegratedBtn.disabled = true;
+    countsEl.textContent = 'RUNNING FULL INTEGRATED PIPELINE (P1 + P2)...';
+
+    try {
+      // 1. Person 2 Local Visual Perception
+      const perceptionResult = await pipeline.runLocalPerception(currentInput, previewImg);
+
+      // 2. Person 1 DOM Elements (Mocked / Active Tab Query)
+      const mockDomElements = [
+        { tag: 'input', type: 'text', name: 'user', id: 'name-field', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
+        { tag: 'input', type: 'email', name: 'email', id: 'email-field', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } }
+      ];
+
+      // 3. PerceptionAdapter Bridge
+      const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(mockDomElements, perceptionResult);
+
+      // 4. Person 1 Redaction Engine & Sanitizer
+      let redactedCount = 0;
+      let isSafe = true;
+      let finalPayload: any = null;
+      let redactedList: any[] = [];
+
+      const win = window as any;
+      if (win.RedactionEngine && win.Sanitizer && win.ServerAdapter) {
+        redactedList = win.RedactionEngine.redactElements(integratedElements);
+        const sanitizedPayload = win.Sanitizer.sanitizeContext(redactedList);
+        const gateCheck = win.Sanitizer.outboundCheck(sanitizedPayload);
+
+        redactedCount = sanitizedPayload.elements.filter((e: any) => e.redacted).length;
+        isSafe = gateCheck.safe;
+        finalPayload = win.ServerAdapter.buildOutboundPayload(sanitizedPayload, 'extension_popup_task');
+
+        p1WireStatusEl.textContent = `Wire Payload: ${sanitizedPayload.elements.length} Elements`;
+      } else {
+        redactedList = integratedElements.map(e => ({
+          ...e,
+          redacted: !!e.sensitivity && e.sensitivity !== 'SAFE',
+          value: e.sensitivity && e.sensitivity !== 'SAFE' ? `{${e.ruleToken || 'PII'} filled}` : e.value
+        }));
+        redactedCount = redactedList.filter(e => e.redacted).length;
+        finalPayload = { version: '1.0.0', elements: redactedList };
+        p1WireStatusEl.textContent = 'Wire Payload: Ready';
+      }
+
+      p1RedactedCountEl.textContent = `${redactedCount} Sensitive Elements Masked`;
+      p1OutboundStatusEl.textContent = isSafe ? 'SAFE (0 Leaks Detected)' : 'LEAKS BLOCKED';
+      p1OutboundStatusEl.className = isSafe ? 'status-val status-success' : 'status-val status-error';
+
+      integrationBox.style.display = 'block';
+      handoffStatusEl.textContent = 'PERSON 1 REDACTION APPLIED';
+      handoffStatusEl.className = 'status-val status-success';
+
+      countsEl.textContent = `Faces: ${perceptionResult.counts.faces} | OCR: ${perceptionResult.counts.ocrRegions} | PII: ${perceptionResult.counts.piiCandidates} | Redacted: ${redactedCount}`;
+      renderDetections(perceptionResult.detections);
+
+      // Populate Redacted View Tab
+      redactedView.innerHTML = redactedList.map(e => {
+        return `<div class="detection-item ${e.redacted ? 'redacted-item' : 'ocr-item'}">` +
+          `[<${e.tag}> id="${e.id || 'N/A'}"] Redacted: <strong>${e.redacted}</strong> | ` +
+          `Output: <code>"${e.value || e.visibleText || ''}"</code>` +
+          `</div>`;
+      }).join('\n');
+
+      // Populate JSON Wire Payload Tab
+      jsonView.textContent = JSON.stringify(finalPayload, null, 2);
+
+      // Switch to Redacted Text Tab automatically after full run
+      switchTab('REDACTED');
+    } catch (err) {
+      errorBox.textContent = err instanceof Error ? err.message : String(err);
+      errorBox.style.display = 'block';
+    } finally {
+      runIntegratedBtn.disabled = false;
     }
   });
 
@@ -290,7 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx?.clearRect(0, 0, bboxOverlay.width, bboxOverlay.height);
   }
 
-  function renderDetections(detections: DetectionResult[], mode: 'FACE' | 'OCR_TEXT' | 'PII_CANDIDATE' | 'VISUAL_REGION' | 'UNIFIED') {
+  function renderDetections(detections: DetectionResult[]) {
     if (!currentInput) return;
 
     bboxOverlay.width = previewImg.naturalWidth || previewImg.clientWidth;
@@ -300,11 +410,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, bboxOverlay.width, bboxOverlay.height);
-    detectionListEl.innerHTML = '';
+    detectionsView.innerHTML = '';
 
     if (detections.length === 0) {
-      detectionListEl.innerHTML = `<div class="detection-item">No detections in current frame.</div>`;
-      detectionListEl.style.display = 'block';
+      detectionsView.innerHTML = `<div class="detection-item">No detections in current frame.</div>`;
       return;
     }
 
@@ -349,9 +458,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         itemEl.textContent = `[${det.id}] ${det.type}: "${det.metadata?.text || det.metadata?.category || 'FACE'}" | Conf: ${det.confidence} | BBox: {x:${x},y:${y},w:${width},h:${height}}`;
       }
-      detectionListEl.appendChild(itemEl);
+      detectionsView.appendChild(itemEl);
     });
 
-    detectionListEl.style.display = 'block';
+    switchTab('DETECTIONS');
   }
 });

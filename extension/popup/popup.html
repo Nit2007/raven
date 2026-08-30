@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local Perception Debug UI (M6 Visual Sensitive Objects)</title>
+  <title>SafeScreen — Integrated Local Perception & Outbound Privacy Agent</title>
   <style>
     :root {
       --bg-color: #1e1e2e;
@@ -20,7 +20,7 @@
     }
 
     body {
-      width: 520px;
+      width: 540px;
       margin: 0;
       padding: 16px;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -36,7 +36,7 @@
       color: var(--accent-color);
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
     }
 
     .badge {
@@ -51,7 +51,7 @@
     .btn-group {
       display: flex;
       gap: 5px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .btn {
@@ -75,6 +75,7 @@
     .btn-pii { background: linear-gradient(135deg, #cba6f7, #f5c2e7); color: #11111b; }
     .btn-vision { background: linear-gradient(135deg, #fab387, #f9e2af); color: #11111b; }
     .btn-unified { background: linear-gradient(135deg, #a6e3a1, #89b4fa); color: #11111b; font-weight: bold; }
+    .btn-integrated { background: linear-gradient(135deg, #cba6f7, #a6e3a1); color: #11111b; font-weight: bold; padding: 10px; margin-top: 4px; width: 100%; font-size: 11px; }
 
     .btn:hover { opacity: 0.9; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -165,17 +166,45 @@
       pointer-events: none;
     }
 
-    .detection-list {
-      margin-top: 10px;
-      max-height: 140px;
+    /* Output Viewer Tabs & Containers */
+    .output-tab-bar {
+      display: flex;
+      gap: 4px;
+      margin-top: 12px;
+      border-bottom: 1px solid #313244;
+      padding-bottom: 4px;
+    }
+
+    .tab-btn {
+      background: #181825;
+      border: 1px solid #313244;
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--accent-color);
+      color: #11111b;
+      border-color: var(--accent-color);
+    }
+
+    .output-box {
+      margin-top: 6px;
+      max-height: 180px;
       overflow-y: auto;
       font-size: 11px;
       font-family: monospace;
-      background: #181825;
-      padding: 8px;
+      background: #11111b;
+      padding: 10px;
       border-radius: 4px;
       border: 1px solid #313244;
       display: none;
+      white-space: pre-wrap;
+      word-break: break-all;
     }
 
     .detection-item {
@@ -187,6 +216,16 @@
     .ocr-item { color: var(--info-color); }
     .pii-item { color: var(--pii-color); }
     .vision-item { color: var(--vision-color); }
+    .redacted-item { color: var(--success-color); }
+
+    .integration-box {
+      margin-top: 10px;
+      background: #181825;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--accent-color);
+      display: none;
+    }
 
     .locality-box {
       margin-top: 12px;
@@ -207,11 +246,11 @@
     .arch-notice {
       margin-top: 8px;
       padding: 6px 10px;
-      background: rgba(249, 226, 175, 0.15);
-      border: 1px solid var(--warning-color);
+      background: rgba(166, 227, 161, 0.15);
+      border: 1px solid var(--success-color);
       border-radius: 4px;
       font-size: 11px;
-      color: var(--warning-color);
+      color: var(--success-color);
       text-align: center;
       font-weight: bold;
     }
@@ -230,7 +269,10 @@
 </head>
 <body>
 
-  <h2>Local Perception Agent <span class="badge">M6 Visual Objects</span></h2>
+  <h2>
+    SafeScreen Agent
+    <span class="badge">Person 1 + Person 2 Integrated</span>
+  </h2>
 
   <div class="btn-group">
     <button id="captureBtn" class="btn btn-capture">📷 Capture</button>
@@ -238,8 +280,10 @@
     <button id="runOcrBtn" class="btn btn-ocr" disabled>📝 OCR</button>
     <button id="detectPiiBtn" class="btn btn-pii" disabled>🔒 PII</button>
     <button id="detectVisionBtn" class="btn btn-vision" disabled>👁️ Vision</button>
-    <button id="runUnifiedBtn" class="btn btn-unified" disabled>⚡ Unified (M6)</button>
+    <button id="runUnifiedBtn" class="btn btn-unified" disabled>⚡ Unified (P2)</button>
   </div>
+
+  <button id="runIntegratedBtn" class="btn btn-integrated" disabled>🛡️ Full Integrated Pipeline (Person 1 + Person 2)</button>
 
   <div id="errorBox" class="error-box"></div>
 
@@ -261,7 +305,7 @@
       <span id="detectionCounts" class="status-val">—</span>
     </div>
     <div class="status-row">
-      <span class="status-label">Person 1 Handoff Contract:</span>
+      <span class="status-label">Person 1 Integration:</span>
       <span id="handoffStatus" class="status-val status-success">READY FOR PERSON 1</span>
     </div>
 
@@ -287,17 +331,42 @@
       <div class="timing-row"><span>Total Pipeline:</span><span id="tTotal">—</span></div>
     </div>
 
+    <div id="integrationBox" class="integration-box">
+      <div class="status-row">
+        <span class="status-label">Person 1 Redacted Elements:</span>
+        <span id="p1RedactedCount" class="status-val status-success">0 Elements</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Outbound Privacy Gate:</span>
+        <span id="p1OutboundStatus" class="status-val status-success">SAFE (0 Leaks)</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Server Wire Payload:</span>
+        <span id="p1WireStatus" class="status-val status-info">Schema v1.0.0 Ready</span>
+      </div>
+    </div>
+
     <div id="visualWrapper" class="visual-wrapper">
       <img id="capturePreview" alt="Viewport Frame" />
       <canvas id="bboxOverlay"></canvas>
     </div>
 
-    <div id="detectionList" class="detection-list"></div>
+    <!-- Output Viewer Tabs -->
+    <div class="output-tab-bar">
+      <button id="tabDetectionsBtn" class="tab-btn active">📝 Raw Detections</button>
+      <button id="tabRedactedBtn" class="tab-btn">🔒 Redacted Text Output</button>
+      <button id="tabJsonBtn" class="tab-btn">📤 Outbound JSON Payload</button>
+    </div>
+
+    <!-- Tab Output Box Views -->
+    <div id="detectionsView" class="output-box" style="display: block;">Click any button above to view detections.</div>
+    <div id="redactedView" class="output-box">No redaction executed yet. Run Full Integrated Pipeline to view masked text output.</div>
+    <div id="jsonView" class="output-box">No wire payload generated yet.</div>
   </div>
 
   <div class="locality-box">
     <div class="locality-item">
-      <span>LOCAL VISION DETECTION:</span>
+      <span>PERCEPTION & REDACTION:</span>
       <strong class="status-success">100% ON-DEVICE</strong>
     </div>
     <div class="locality-item">
@@ -305,11 +374,11 @@
       <strong class="status-success">NOT USED</strong>
     </div>
     <div class="locality-item">
-      <span>Screenshot / PII Upload:</span>
-      <strong class="status-success">NOT PERFORMED</strong>
+      <span>Unsanitized PII Upload:</span>
+      <strong class="status-success">0% (BLOCKED BY GATE)</strong>
     </div>
     <div class="arch-notice">
-      NO REDACTION PERFORMED BY PERSON 2
+      PERSON 2 DETECTS ➔ PERSON 1 REDACTS
     </div>
   </div>
 

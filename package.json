@@ -12,7 +12,8 @@
     "build:offscreen": "npx esbuild src/offscreen/offscreen.ts --bundle --format=iife --target=es2022 --outfile=dist/src/offscreen/offscreen.js",
     "build": "npm run build:tsc && npm run build:content && npm run build:popup && npm run build:background && npm run build:offscreen",
     "watch": "npx tsc --watch",
-    "test": "npm run build && node --test dist/test/*.js"
+    "test": "npm run build && node --test dist/test/*.js",
+    "test:manual": "npm run build && node scripts/manual-integration-demo.js"
   },
   "keywords": [
     "chrome-extension",
