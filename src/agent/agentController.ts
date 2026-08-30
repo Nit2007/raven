@@ -222,7 +222,8 @@ export class AgentController {
 
     console.log('[RAVEN AgentController] EXECUTION RECEIPT', execReceipt);
 
-    if (!execReceipt.success || !execReceipt.dispatched) {
+    const isDispatchRequired = command.action !== 'NONE' && command.action !== 'DONE';
+    if (!execReceipt.success || (isDispatchRequired && !execReceipt.dispatched)) {
       this.status = 'TASK_FAILED';
       const msg = `Action execution failed: ${execReceipt.error || 'Execution dispatch failed'}`;
       onStateChange?.(this.status, msg);

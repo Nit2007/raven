@@ -125,9 +125,9 @@ export class ActionExecutor {
         action: command.action,
         target_element_id: command.targetSelector,
         execution: 'REAL_BROWSER',
-        dispatched: false,
+        dispatched: true,
         verified: true,
-        message: command.action === 'DONE' ? 'Task completed by server decision' : 'No browser action required'
+        message: command.action === 'DONE' ? 'Task completed by server decision' : (command.reasoning || 'No browser action required')
       };
       console.log('[RAVEN ActionExecutor] FINAL EXECUTION RECEIPT (NONE/DONE)', noneReceipt);
       return noneReceipt;
