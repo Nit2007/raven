@@ -1,6 +1,7 @@
 /**
  * Content script running inside web pages.
  * Handles DOM element extraction for analysis and strict real browser action execution.
+ * M9.2 — Real Browser Action Dispatch Engine.
  */
 
 (() => {
@@ -73,36 +74,63 @@
     return results;
   }
 
-  // Find target element by ID, selector, or attribute
+  // Find target element by ID, selector, or attribute (Codeforces & generic site support)
   function findTargetElement(selectorOrId: string | null): HTMLElement | null {
     if (!selectorOrId) return null;
 
+    const clean = selectorOrId.trim();
+
     // 1. Direct ID match
-    let el = document.getElementById(selectorOrId);
+    let el = document.getElementById(clean);
     if (el) return el;
 
     // 2. Query Selector match
     try {
-      el = document.querySelector(selectorOrId);
+      el = document.querySelector(clean);
       if (el) return el;
     } catch (_) {
       // Ignore invalid CSS selector syntax
     }
 
-    // 3. Match by name or data attribute
+    // 3. Match by name, data-id, or value attribute
     try {
-      el = document.querySelector(`[name="${selectorOrId}"]`) ||
-           document.querySelector(`[data-id="${selectorOrId}"]`) ||
-           document.querySelector(`[id="${selectorOrId}"]`);
+      el = document.querySelector(`[name="${clean}"]`) ||
+           document.querySelector(`[data-id="${clean}"]`) ||
+           document.querySelector(`[id="${clean}"]`) ||
+           document.querySelector(`[value="${clean}"]`);
       if (el) return el;
     } catch (_) {}
 
-    // 4. Match by exact or partial button/input text
-    const buttons = Array.from(document.querySelectorAll('button, a, input[type="submit"], input[type="button"]'));
-    for (const b of buttons) {
-      if (b.id === selectorOrId || b.textContent?.trim().toLowerCase().includes(selectorOrId.toLowerCase())) {
-        return b as HTMLElement;
+    // 4. Match by exact or partial button/input text or value (Case-insensitive)
+    const lowerClean = clean.toLowerCase();
+    const candidates = Array.from(document.querySelectorAll('button, a, input, [role="button"], [role="link"], select'));
+
+    for (const cand of candidates) {
+      const htmlEl = cand as HTMLElement;
+      const id = (htmlEl.id || '').toLowerCase();
+      const name = ((htmlEl as HTMLInputElement).name || '').toLowerCase();
+      const text = (htmlEl.textContent || '').trim().toLowerCase();
+      const val = ((htmlEl as HTMLInputElement).value || '').trim().toLowerCase();
+      const placeholder = ((htmlEl as HTMLInputElement).placeholder || '').trim().toLowerCase();
+
+      if (id === lowerClean || name === lowerClean) {
+        return htmlEl;
       }
+      if (text && (text === lowerClean || text.includes(lowerClean))) {
+        return htmlEl;
+      }
+      if (val && (val === lowerClean || val.includes(lowerClean))) {
+        return htmlEl;
+      }
+      if (placeholder && placeholder.includes(lowerClean)) {
+        return htmlEl;
+      }
+    }
+
+    // 5. Fallback for login buttons (e.g., Codeforces "Enter" / "Login" submit buttons)
+    if (lowerClean.includes('login') || lowerClean.includes('submit') || lowerClean.includes('enter') || lowerClean.includes('sign in')) {
+      const submitBtn = document.querySelector('input[type="submit"], button[type="submit"], input.submit, button.submit') as HTMLElement;
+      if (submitBtn) return submitBtn;
     }
 
     return null;
@@ -113,6 +141,8 @@
     const actionType = String(command.action || 'NONE').toUpperCase();
     const targetSelector = command.targetSelector || null;
     const value = command.value || null;
+
+    console.log(`[RAVEN Content Script] Processing EXECUTE_ACTION | Action: ${actionType} | Target: ${targetSelector || 'NONE'}`);
 
     if (actionType === 'NONE' || actionType === 'DONE') {
       return {
@@ -130,6 +160,7 @@
 
     if (actionType === 'CLICK') {
       if (!targetEl) {
+        console.warn(`[RAVEN Content Script] TARGET_NOT_FOUND: Element "${targetSelector}" not found in current live DOM.`);
         return {
           success: false,
           action: 'CLICK',
@@ -137,9 +168,11 @@
           execution: 'REAL_BROWSER',
           dispatched: false,
           verified: false,
-          error: `Target element "${targetSelector}" not found in current live DOM state`
+          error: `TARGET_NOT_FOUND: Element "${targetSelector}" not found in current live DOM state`
         };
       }
+
+      console.log(`[RAVEN Content Script] Target element found: <${targetEl.tagName.toLowerCase()} id="${targetEl.id}" class="${targetEl.className}">`);
 
       // Scroll into view & focus
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -150,7 +183,7 @@
       targetEl.style.outline = '3px solid #a6e3a1';
       setTimeout(() => { targetEl.style.outline = prevOutline; }, 1500);
 
-      // Dispatch mouse events
+      // Dispatch real mouse events
       const mouseEvents = ['pointerdown', 'mousedown', 'mouseup', 'click'];
       mouseEvents.forEach(evtName => {
         targetEl.dispatchEvent(new MouseEvent(evtName, { bubbles: true, cancelable: true, view: window }));
@@ -161,6 +194,8 @@
       }
 
       const label = targetEl.textContent?.trim() || (targetEl as HTMLInputElement).value || targetSelector || 'element';
+      console.log(`[RAVEN Content Script] Real click dispatched cleanly on element "${label}"`);
+
       return {
         success: true,
         action: 'CLICK',
@@ -174,6 +209,7 @@
 
     if (actionType === 'TYPE') {
       if (!targetEl) {
+        console.warn(`[RAVEN Content Script] TARGET_NOT_FOUND: Element "${targetSelector}" not found for TYPE.`);
         return {
           success: false,
           action: 'TYPE',
@@ -181,7 +217,7 @@
           execution: 'REAL_BROWSER',
           dispatched: false,
           verified: false,
-          error: `Target element "${targetSelector}" not found in current live DOM state`
+          error: `TARGET_NOT_FOUND: Element "${targetSelector}" not found in current live DOM state`
         };
       }
 
@@ -192,6 +228,8 @@
       targetEl.dispatchEvent(new Event('input', { bubbles: true }));
       targetEl.dispatchEvent(new Event('change', { bubbles: true }));
 
+      console.log(`[RAVEN Content Script] Typed text into target "${targetSelector}"`);
+
       return {
         success: true,
         action: 'TYPE',
@@ -199,7 +237,7 @@
         execution: 'REAL_BROWSER',
         dispatched: true,
         verified: true,
-        message: `Typed "${value || ''}" into "${targetSelector}"`
+        message: `Typed text into "${targetSelector}"`
       };
     }
 
@@ -229,7 +267,7 @@
           execution: 'REAL_BROWSER',
           dispatched: false,
           verified: false,
-          error: `Target element "${targetSelector}" is not a valid <select> element`
+          error: `TARGET_NOT_FOUND: Element "${targetSelector}" is not a valid <select> element`
         };
       }
 
@@ -273,9 +311,11 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'EXTRACT_DOM') {
       try {
+        console.log('[RAVEN Content Script] Received EXTRACT_DOM request');
         const elements = extractLiveDomElements();
         sendResponse({ success: true, elements });
       } catch (err) {
+        console.error('[RAVEN Content Script] Error during EXTRACT_DOM:', err);
         sendResponse({ success: false, error: String(err), elements: [] });
       }
       return true;
@@ -283,9 +323,11 @@
 
     if (message.type === 'EXECUTE_ACTION') {
       try {
+        console.log('[RAVEN Content Script] Received EXECUTE_ACTION request:', message.command);
         const result = executeValidatedAction(message.command);
         sendResponse(result);
       } catch (err) {
+        console.error('[RAVEN Content Script] Error during EXECUTE_ACTION:', err);
         sendResponse({
           success: false,
           action: message.command?.action || 'UNKNOWN',
@@ -300,18 +342,5 @@
     }
   });
 
-  // Global listener for window messages (legacy support)
-  window.addEventListener('message', (event) => {
-    if (event.data?.type === 'TRIGGER_LOCAL_PERCEPTION') {
-      chrome.runtime.sendMessage({
-        type: 'CAPTURE_AND_PERCEIVE',
-        viewport: getViewportMeta()
-      }, (response) => {
-        window.postMessage({
-          type: 'LOCAL_PERCEPTION_RESPONSE',
-          detections: response?.detections || []
-        }, '*');
-      });
-    }
-  });
+  console.log('[RAVEN Content Script] Content script loaded & listening for EXECUTE_ACTION / EXTRACT_DOM');
 })();

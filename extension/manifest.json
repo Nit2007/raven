@@ -10,14 +10,17 @@
     "storage",
     "tabs"
   ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
-    "service_worker": "dist/background.js",
+    "service_worker": "dist/src/background/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["dist/content.js"]
+      "js": ["dist/src/content/content.js"]
     }
   ],
   "action": {

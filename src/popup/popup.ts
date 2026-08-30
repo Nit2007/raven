@@ -285,23 +285,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  // Query DOM elements from active tab
+  // Query DOM elements from active tab with dynamic script injection fallback
   const queryLiveDomFromActiveTab = (): Promise<ElementInfo[]> => {
     return new Promise((resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
+        console.warn('[RAVEN Popup] chrome.tabs API unavailable — returning fallback DOM elements');
         resolve(getFallbackDomElements());
         return;
       }
 
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0 || !tabs[0].id) {
+          console.warn('[RAVEN Popup] INVALID_TAB: No active browser tab found');
           resolve(getFallbackDomElements());
           return;
         }
 
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXTRACT_DOM' }, (response) => {
-          if (chrome.runtime.lastError || !response || !response.success || !Array.isArray(response.elements) || response.elements.length === 0) {
-            resolve(getFallbackDomElements());
+        const activeTab = tabs[0];
+        const tabId = activeTab.id!;
+        const url = activeTab.url || '';
+
+        // Check restricted Chrome pages
+        if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('https://chrome.google.com/webstore')) {
+          console.warn(`[RAVEN Popup] RESTRICTED_PAGE: Cannot extract DOM on internal Chrome URL "${url}"`);
+          resolve(getFallbackDomElements());
+          return;
+        }
+
+        console.log(`[RAVEN Popup] Sending EXTRACT_DOM to tab: ${tabId} (${url})`);
+
+        chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_DOM' }, (response) => {
+          const lastErr = chrome.runtime.lastError;
+          if (lastErr || !response || !response.success || !Array.isArray(response.elements) || response.elements.length === 0) {
+            console.warn(`[RAVEN Popup] NO_RECEIVING_END: Message failed on tab ${tabId}. Attempting dynamic content script injection...`, lastErr?.message);
+            
+            if (chrome.scripting) {
+              chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['dist/src/content/content.js']
+              }, () => {
+                const injectErr = chrome.runtime.lastError;
+                if (injectErr) {
+                  console.error(`[RAVEN Popup] CONTENT_SCRIPT_NOT_CONNECTED: Dynamic injection failed for tab ${tabId}:`, injectErr.message);
+                  resolve(getFallbackDomElements());
+                } else {
+                  console.log(`[RAVEN Popup] Dynamic content script injected successfully on tab ${tabId}. Retrying EXTRACT_DOM...`);
+                  chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_DOM' }, (retryRes) => {
+                    if (retryRes && retryRes.success && Array.isArray(retryRes.elements) && retryRes.elements.length > 0) {
+                      resolve(retryRes.elements);
+                    } else {
+                      resolve(getFallbackDomElements());
+                    }
+                  });
+                }
+              });
+            } else {
+              resolve(getFallbackDomElements());
+            }
           } else {
             resolve(response.elements);
           }
@@ -340,7 +380,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   };
 
-  // Dispatch action to content script — Strict real browser dispatch, NO MOCK FALLBACK
+  // Dispatch action to content script — Strict real browser dispatch with dynamic injection fallback
   const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<ActionReceipt> => {
     return new Promise((resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
@@ -351,7 +391,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           execution: 'REAL_BROWSER',
           dispatched: false,
           verified: false,
-          error: 'Active browser tab unavailable (chrome.tabs undefined)'
+          error: 'INVALID_TAB: Active browser tab API unavailable'
         });
         return;
       }
@@ -365,24 +405,84 @@ document.addEventListener('DOMContentLoaded', async () => {
             execution: 'REAL_BROWSER',
             dispatched: false,
             verified: false,
-            error: 'No active browser tab found'
+            error: 'INVALID_TAB: No active browser tab found'
           });
           return;
         }
 
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'EXECUTE_ACTION', command }, (response: ActionReceipt) => {
-          if (chrome.runtime.lastError || !response) {
-            const errMsg = chrome.runtime.lastError ? chrome.runtime.lastError.message : 'No response from webpage content script';
-            resolve({
-              success: false,
-              action: command.action,
-              target_element_id: command.targetSelector,
-              execution: 'REAL_BROWSER',
-              dispatched: false,
-              verified: false,
-              error: `Failed to dispatch action to active webpage: ${errMsg}`
-            });
+        const activeTab = tabs[0];
+        const tabId = activeTab.id!;
+        const url = activeTab.url || '';
+
+        if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('https://chrome.google.com/webstore')) {
+          resolve({
+            success: false,
+            action: command.action,
+            target_element_id: command.targetSelector,
+            execution: 'REAL_BROWSER',
+            dispatched: false,
+            verified: false,
+            error: `RESTRICTED_PAGE: Content scripts cannot execute on internal Chrome URL (${url})`
+          });
+          return;
+        }
+
+        console.log(`[RAVEN Popup] Dispatching EXECUTE_ACTION to tab ${tabId} | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
+
+        chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_ACTION', command }, (response: ActionReceipt) => {
+          const lastErr = chrome.runtime.lastError;
+          if (lastErr || !response) {
+            console.warn(`[RAVEN Popup] NO_RECEIVING_END on tab ${tabId}: ${lastErr?.message}. Attempting dynamic content script injection...`);
+            
+            if (chrome.scripting) {
+              chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['dist/src/content/content.js']
+              }, () => {
+                const injectErr = chrome.runtime.lastError;
+                if (injectErr) {
+                  resolve({
+                    success: false,
+                    action: command.action,
+                    target_element_id: command.targetSelector,
+                    execution: 'REAL_BROWSER',
+                    dispatched: false,
+                    verified: false,
+                    error: `CONTENT_SCRIPT_NOT_CONNECTED: Dynamic injection failed (${injectErr.message})`
+                  });
+                } else {
+                  console.log(`[RAVEN Popup] Dynamic content script injected. Retrying EXECUTE_ACTION...`);
+                  chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_ACTION', command }, (retryRes: ActionReceipt) => {
+                    if (!retryRes) {
+                      resolve({
+                        success: false,
+                        action: command.action,
+                        target_element_id: command.targetSelector,
+                        execution: 'REAL_BROWSER',
+                        dispatched: false,
+                        verified: false,
+                        error: 'ACTION_HANDLER_FAILED: No response after script injection'
+                      });
+                    } else {
+                      console.log(`[RAVEN Popup] Action receipt received after injection retry:`, retryRes);
+                      resolve(retryRes);
+                    }
+                  });
+                }
+              });
+            } else {
+              resolve({
+                success: false,
+                action: command.action,
+                target_element_id: command.targetSelector,
+                execution: 'REAL_BROWSER',
+                dispatched: false,
+                verified: false,
+                error: `CONTENT_SCRIPT_NOT_CONNECTED: ${lastErr?.message || 'No receiving end'}`
+              });
+            }
           } else {
+            console.log(`[RAVEN Popup] Action receipt received:`, response);
             resolve(response);
           }
         });
