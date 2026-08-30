@@ -33,6 +33,7 @@ var RedactionEngine = (function () {
   }
 
   function abstractText(text) {
+    if (!text || typeof text !== 'string') return text;
     var rules = getAbstractionRules();
     var result = text;
     for (var i = 0; i < rules.length; i++) {
@@ -40,13 +41,7 @@ var RedactionEngine = (function () {
       rule.regex.lastIndex = 0;
       result = result.replace(rule.regex, rule.token);
     }
-    // NER fallback for text abstraction
-    if (typeof SensitivityDetector !== 'undefined') {
-       // Since text abstraction is tricky to generalize without full NLP pass, 
-       // rely on the classification pass. 
-       // In a real implementation, we'd replace NER hits directly in the text node.
-       result = result.replace(/\b([A-Z][a-z]{2,})\s([A-Z][a-z]{2,})\b/g, '[PERSON_NAME]');
-    }
+    result = result.replace(/\b([A-Z][a-z]{2,})\s([A-Z][a-z]{2,})\b/g, '[PERSON_NAME]');
     return result;
   }
 
@@ -60,26 +55,33 @@ var RedactionEngine = (function () {
       out.policyAction = action;
 
       if (action === 'REDACT') {
-        var tokenName = (el.ruleToken || 'FIELD').replace(/[\[\]]/g, '');
-        
-        // Generalize placeholder if confidence is low
+        var rawToken = el.ruleToken || 'PII';
+        var tokenName = rawToken.replace(/[\[\]]/g, '');
+
         if (el.sensitivity === 'LOW_CONFIDENCE_PII') {
-           if (tokenName !== 'PERSON_NAME' && tokenName !== 'LOCATION' && tokenName !== 'CLUSTERED_DATA') {
-             tokenName = 'PERSONAL_DATA';
-           }
+          if (tokenName !== 'PERSON_NAME' && tokenName !== 'LOCATION' && tokenName !== 'CLUSTERED_DATA' && tokenName !== 'EMAIL' && tokenName !== 'PHONE' && tokenName !== 'CARD') {
+            tokenName = 'PERSONAL_DATA';
+          }
         }
-        
-        var isEmpty = !(el.value && el.value.trim().length > 0) && !(el.visibleText && el.visibleText.trim().length > 0);
-        var customMask = isEmpty ? '{empty ' + tokenName + '}' : '{' + tokenName + ' filled}';
-        
-        // Apply masking to fields, or abstract text if it's a text node (not an input)
-        if (el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select') {
+
+        var customMask = '{' + tokenName + '}';
+        if (tokenName === 'FACE' || el.tag === 'visual-face') customMask = '[FACE_REGION]';
+        else if (el.tag === 'visual-document') customMask = el.visibleText || '[SENSITIVE_DOCUMENT]';
+
+        // 1. Mandatory Value Redaction for ALL Redacted Elements
+        if (out.value !== undefined && out.value !== null) {
           out.value = customMask;
-          if (out.visibleText) out.visibleText = customMask;
-        } else {
-          // It's a text node flagged by NER or Regex
-          out.visibleText = abstractText(out.visibleText);
         }
+
+        // 2. Mandatory Visible Text Redaction
+        if (out.visibleText !== undefined && out.visibleText !== null) {
+          if (el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select' || el.tag.indexOf('visual-') === 0) {
+            out.visibleText = customMask;
+          } else {
+            out.visibleText = abstractText(out.visibleText);
+          }
+        }
+
         out.redacted = true;
       } else {
         out.redacted = false;

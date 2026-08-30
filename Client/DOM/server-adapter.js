@@ -31,11 +31,7 @@ var ServerAdapter = (function () {
     return 'ss-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 6);
   }
 
-  // --- URL privacy: never leak raw query strings ---
-
   function hashUrl(url) {
-    // Simple FNV-1a 32-bit hash — no crypto dependency needed, this isn't security-critical,
-    // it just needs to be a non-reversible identifier for the page
     var hash = 0x811c9dc5;
     for (var i = 0; i < url.length; i++) {
       hash ^= url.charCodeAt(i);
@@ -46,7 +42,6 @@ var ServerAdapter = (function () {
 
   function safeUrlIdentifier(url) {
     if (config.URL_MODE === 'hash') return hashUrl(url);
-    // Default: domain-only
     try { return new URL(url).hostname; } catch (_) { return 'unknown'; }
   }
 
@@ -58,7 +53,8 @@ var ServerAdapter = (function () {
     var elements = (sanitizedPayload.elements || []).map(function (el) {
       if (el.redacted) {
         redactionCount++;
-        if (el.ruleCategory) categorySet[el.ruleCategory] = (categorySet[el.ruleCategory] || 0) + 1;
+        var catKey = el.ruleCategory || 'PII';
+        categorySet[catKey] = (categorySet[catKey] || 0) + 1;
       }
       return {
         tag: el.tag,
@@ -99,6 +95,26 @@ var ServerAdapter = (function () {
   function sendToServer(payload, overrides) {
     var opts = Object.assign({}, config, overrides || {});
 
+    // AUTHORITATIVE OUTBOUND PRIVACY GATE CHECK
+    var gateCheck = (typeof Sanitizer !== 'undefined' && Sanitizer.outboundCheck)
+      ? Sanitizer.outboundCheck(payload)
+      : { safe: true, leaks: [] };
+
+    if (!gateCheck.safe) {
+      console.error('[SafeScreen ServerAdapter] CRITICAL: Transmission BLOCKED by Outbound Privacy Gate. Leaks detected:', gateCheck.leaks);
+      return Promise.resolve({
+        status: 403,
+        ok: false,
+        body: {
+          error: 'TRANSMISSION_BLOCKED: Sensitive PII detected in outbound payload',
+          leaks: gateCheck.leaks,
+          action: 'NONE',
+          targetSelector: null,
+          confidence: 0
+        }
+      });
+    }
+
     if (opts.MOCK_MODE) {
       console.group('[SafeScreen] Mock server send (MOCK_MODE=true)');
       console.log('Endpoint:', opts.ENDPOINT_URL);
@@ -137,7 +153,6 @@ var ServerAdapter = (function () {
     })
     .catch(function (err) {
       clearTimeout(timeoutId);
-      // Retry once on failure (network error or timeout)
       if (err.name === 'AbortError') {
         console.warn('[SafeScreen] Request timed out after', opts.TIMEOUT_MS, 'ms — retrying once');
       } else {
@@ -177,7 +192,6 @@ var ServerAdapter = (function () {
     var body = response.body || response;
     var errors = [];
 
-    // Validate required fields
     if (!body.action || typeof body.action !== 'string') {
       errors.push('Missing or invalid "action" field');
     } else if (!VALID_ACTIONS.has(body.action)) {
@@ -206,21 +220,16 @@ var ServerAdapter = (function () {
       metadata: body.metadata || null
     };
 
-    // Emit custom event for other modules to consume — NO execution here
     try {
       var event = new CustomEvent('agentCommandReceived', {
         detail: command,
         bubbles: true
       });
       document.dispatchEvent(event);
-    } catch (_) {
-      // CustomEvent not available in some contexts (service workers)
-    }
+    } catch (_) {}
 
     return { valid: true, errors: [], command: command };
   }
-
-  // --- Public API ---
 
   return {
     config: config,

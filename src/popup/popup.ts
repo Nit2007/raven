@@ -1,15 +1,12 @@
 import { CaptureManager } from '../perception/capture/captureManager.js';
-import { LocalFaceDetector } from '../perception/face/faceDetector.js';
 import { PerceptionInput } from '../perception/input/perceptionInput.js';
-import { LocalOcrEngine } from '../perception/ocr/ocrEngine.js';
 import { LocalPerceptionPipeline } from '../perception/perceptionPipeline.js';
-import { PiiCandidateDetector, PiiDetectionMetadata } from '../perception/pii/piiDetector.js';
-import { LocalVisualObjectDetector } from '../perception/vision/visualObjectDetector.js';
-import { PerceptionAdapter } from '../integration/perceptionAdapter.js';
+import { PiiDetectionMetadata } from '../perception/pii/piiDetector.js';
+import { PerceptionAdapter, ElementInfo } from '../integration/perceptionAdapter.js';
+import { Person1Bridge } from '../integration/person1Bridge.js';
 import { DetectionResult } from '../schema/detection.js';
 
 const captureManager = new CaptureManager();
-const ocrEngine = new LocalOcrEngine();
 const pipeline = new LocalPerceptionPipeline();
 
 let currentInput: PerceptionInput | null = null;
@@ -27,7 +24,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusIcon = document.getElementById('statusIcon') as HTMLSpanElement;
   const statusHeading = document.getElementById('statusHeading') as HTMLHeadingElement;
   const statusDesc = document.getElementById('statusDesc') as HTMLParagraphElement;
-  const localityTag = document.getElementById('localityTag') as HTMLSpanElement;
   const timeLatencyTag = document.getElementById('timeLatencyTag') as HTMLSpanElement;
 
   // Protection Summary Category Rows
@@ -128,7 +124,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Overlay Toggle (Show all OCR boxes vs sensitive boxes only)
   showOcrOverlayCheck.addEventListener('change', () => {
     if (currentDetections) {
       renderBboxes(currentDetections);
@@ -223,43 +218,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       const perceptionResult = await pipeline.runLocalPerception(currentInput, previewImg);
       currentDetections = perceptionResult.detections;
 
-      // 3. Person 1 DOM Elements Integration
-      const mockDomElements = [
-        { tag: 'input', type: 'text', name: 'user', id: 'name-field', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
-        { tag: 'input', type: 'email', name: 'email', id: 'email-field', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } }
+      // 3. Extract Raw DOM Elements (Mocked / Active Tab Query)
+      const rawDomElements: ElementInfo[] = [
+        { tag: 'input', type: 'text', name: 'user', id: 'name-field', labelText: 'Full Name', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
+        { tag: 'input', type: 'email', name: 'email', id: 'email-field', labelText: 'Email Address', value: 'john.doe@example.com', boundingBox: { x: 50, y: 150, width: 200, height: 30 } },
+        { tag: 'input', type: 'tel', name: 'phone', id: 'phone-field', labelText: 'Phone Number', value: '+91 98765 43210', boundingBox: { x: 50, y: 200, width: 200, height: 30 } }
       ];
 
-      const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(mockDomElements, perceptionResult);
+      // 4. Person 1 DOM Sensitivity Classification
+      const classifiedDomElements = Person1Bridge.SensitivityDetector.classifyElements(rawDomElements);
 
-      // 4. Person 1 Redaction Engine & Sanitizer
-      let redactedCount = 0;
-      let isSafe = true;
-      let redactedList: any[] = [];
+      // 5. PerceptionAdapter Bridge (Person 2 ML + Person 1 DOM)
+      const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(classifiedDomElements, perceptionResult);
 
-      const win = window as any;
-      if (win.RedactionEngine && win.Sanitizer && win.ServerAdapter) {
-        redactedList = win.RedactionEngine.redactElements(integratedElements);
-        const sanitizedPayload = win.Sanitizer.sanitizeContext(redactedList);
-        const gateCheck = win.Sanitizer.outboundCheck(sanitizedPayload);
+      // 6. Person 1 Redaction Engine Enforcement
+      const redactedElements = Person1Bridge.RedactionEngine.redactElements(integratedElements);
 
-        redactedCount = sanitizedPayload.elements.filter((e: any) => e.redacted).length;
-        isSafe = gateCheck.safe;
-        currentJsonPayload = win.ServerAdapter.buildOutboundPayload(sanitizedPayload, 'raven_popup_task');
-      } else {
-        redactedList = integratedElements.map(e => ({
-          ...e,
-          redacted: !!e.sensitivity && e.sensitivity !== 'SAFE',
-          value: e.sensitivity && e.sensitivity !== 'SAFE' ? `{${e.ruleToken || 'PII'} filled}` : e.value
-        }));
-        redactedCount = redactedList.filter(e => e.redacted).length;
-        currentJsonPayload = { version: '1.0.0', elements: redactedList };
-      }
+      // 7. Person 1 Context Sanitization
+      const sanitizedPayload = Person1Bridge.Sanitizer.sanitizeContext(redactedElements);
 
-      // Update Counts
-      const facesCount = perceptionResult.counts.faces || 0;
-      const piiCount = perceptionResult.counts.piiCandidates || 0;
-      const docsCount = perceptionResult.counts.visualObjects || 0;
-      const totalProtected = facesCount + piiCount + docsCount;
+      // 8. Person 1 Outbound Privacy Gate Check
+      const gateCheck = Person1Bridge.Sanitizer.outboundCheck(sanitizedPayload);
+
+      // 9. Person 1 Server Adapter Serialization & Transmission Attempt
+      currentJsonPayload = Person1Bridge.ServerAdapter.buildOutboundPayload(sanitizedPayload, 'raven_popup_task');
+      const serverResponse = await Person1Bridge.ServerAdapter.sendToServer(currentJsonPayload);
+
+      // Calculate Strict Counts from Sanitized Output
+      const actualRedactedElements = sanitizedPayload.elements.filter((e: any) => e.redacted === true);
+      const totalRedactedCount = actualRedactedElements.length;
+
+      const facesCount = sanitizedPayload.elements.filter((e: any) => e.tag === 'visual-face' || e.ruleCategory === 'BIOMETRIC_FACE').length;
+      const docsCount = sanitizedPayload.elements.filter((e: any) => e.tag === 'visual-document' || e.ruleCategory === 'SENSITIVE_DOCUMENT').length;
+      const piiCount = Math.max(0, totalRedactedCount - facesCount - docsCount);
 
       // Update Summary Rows
       catFacesRow.style.display = facesCount > 0 ? 'flex' : 'none';
@@ -271,7 +262,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       catDocsRow.style.display = docsCount > 0 ? 'flex' : 'none';
       catDocsVal.textContent = String(docsCount);
 
-      catEmptyRow.style.display = totalProtected === 0 ? 'block' : 'none';
+      catEmptyRow.style.display = totalRedactedCount === 0 ? 'block' : 'none';
 
       // Update Latency Tag
       timeLatencyTag.textContent = `${lastCaptureTimeMs + perceptionResult.timing.totalMs} ms`;
@@ -292,11 +283,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       tFusionEl.textContent = `${perceptionResult.timing.fusionMs} ms`;
       tTotalEl.textContent = `${lastCaptureTimeMs + perceptionResult.timing.totalMs} ms`;
 
-      p1RedactedCountEl.textContent = `${redactedCount} sensitive elements masked`;
-      p1OutboundStatusEl.textContent = isSafe ? 'SAFE (0 Leaks)' : 'LEAKS BLOCKED';
+      p1RedactedCountEl.textContent = `${totalRedactedCount} sensitive elements masked`;
+      p1OutboundStatusEl.textContent = gateCheck.safe ? 'SAFE (0 Leaks)' : 'LEAKS BLOCKED';
 
       // Update Server Status Card
-      if (isSafe) {
+      if (gateCheck.safe && serverResponse.ok) {
         serverStatusBadge.className = 'status-dot dot-protected';
         serverStatusBadge.textContent = '● Protected / Ready';
         serverNotice.textContent = '🟢 Nothing sensitive will leak';
@@ -304,7 +295,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         serverStatusBadge.className = 'status-dot dot-blocked';
         serverStatusBadge.textContent = '● Transmission Blocked';
-        serverNotice.textContent = '🔴 Outbound privacy leak blocked';
+        serverNotice.textContent = '🔴 Outbound privacy leak blocked by gate';
         serverNotice.style.color = 'var(--error-color)';
       }
 
@@ -318,7 +309,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           `</div>`;
       }).join('\n') || 'No detections.';
 
-      redactedView.innerHTML = redactedList.map(e => {
+      // Populate Redacted Output View strictly from sanitized payload elements
+      redactedView.innerHTML = sanitizedPayload.elements.map((e: any) => {
         return `<div style="padding:3px 0; border-bottom:1px dashed #313244; color:${e.redacted ? 'var(--success-color)' : 'var(--info-color)'}">` +
           `[<${e.tag}> id="${e.id || 'N/A'}"] Protected: <strong>${e.redacted}</strong> | Output: <code>"${e.value || e.visibleText || ''}"</code>` +
           `</div>`;
@@ -327,10 +319,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       jsonView.textContent = JSON.stringify(currentJsonPayload, null, 2);
 
       // Set Final Status Card State
-      if (!isSafe) {
+      if (!gateCheck.safe || !serverResponse.ok) {
         updateUIState('BLOCKED', 'Privacy verification failed. Outbound transmission was blocked by RAVEN.');
-      } else if (totalProtected > 0) {
-        updateUIState('PROTECTED', `${totalProtected} sensitive item${totalProtected > 1 ? 's were' : ' was'} protected on this page.`);
+      } else if (totalRedactedCount > 0) {
+        updateUIState('PROTECTED', `${totalRedactedCount} sensitive element${totalRedactedCount > 1 ? 's were' : ' was'} protected on this page.`);
       } else {
         updateUIState('SAFE', 'RAVEN analyzed this page locally. No sensitive information detected.');
       }
@@ -358,7 +350,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     ctx.clearRect(0, 0, bboxOverlay.width, bboxOverlay.height);
 
-    // Filter out raw OCR text boxes unless user enabled showOcrOverlayCheck
     const visibleDetections = detections.filter(d => showOcrOverlayCheck.checked || d.type !== 'OCR_TEXT');
 
     visibleDetections.forEach((det, idx) => {

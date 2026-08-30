@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RAVEN Local Privacy Test Ground</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f4f6f9; color: #333; }
+    .card { background: white; padding: 20px; border-radius: 8px; max-width: 500px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; }
+    input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    .face-box { width: 150px; height: 150px; background: #e0e0e0; border: 2px dashed #999; display: flex; align-items: center; justify-content: center; margin-top: 15px; border-radius: 8px; font-weight: bold; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>RAVEN Local Privacy Ground-Truth Test</h2>
+    <p>This page contains live PII fields to test RAVEN local detection & redaction.</p>
+    
+    <div class="form-group">
+      <label for="fullname">Full Name</label>
+      <input type="text" id="fullname" name="fullname" value="Alexander Hamilton" />
+    </div>
+
+    <div class="form-group">
+      <label for="email">Email Address</label>
+      <input type="email" id="email" name="email" value="alexander.hamilton@treasury.gov" />
+    </div>
+
+    <div class="form-group">
+      <label for="phone">Phone Number</label>
+      <input type="tel" id="phone" name="phone" value="+91 98765 43210" />
+    </div>
+
+    <div class="form-group">
+      <label for="card">Credit Card</label>
+      <input type="text" id="card" name="card" value="4111 2222 3333 4444" />
+    </div>
+
+    <div class="form-group">
+      <label for="notes">Public Search Query (Non-sensitive)</label>
+      <input type="text" id="notes" name="notes" value="Weather forecast in Mumbai" />
+    </div>
+
+    <div class="face-box">
+      [Mock Face Region]
+    </div>
+  </div>
+</body>
+</html>

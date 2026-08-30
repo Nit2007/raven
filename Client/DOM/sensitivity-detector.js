@@ -13,8 +13,60 @@
 var SensitivityDetector = (function () {
   'use strict';
 
+  var DEFAULT_RULES = {
+    fieldRules: [
+      {
+        id: 'email_field', description: 'Email input field', category: 'EMAIL', categoryLabel: 'Email',
+        confidence: 0.95, token: '[EMAIL]', scope: 'field',
+        keywords: ['email', 'e-mail', 'mail'], autocompleteHints: ['email'], inputTypeMatch: 'email'
+      },
+      {
+        id: 'phone_field', description: 'Phone number field', category: 'PHONE', categoryLabel: 'Phone',
+        confidence: 0.90, token: '[PHONE]', scope: 'field',
+        keywords: ['phone', 'mobile', 'tel', 'cell', 'contact'], autocompleteHints: ['tel'], inputTypeMatch: 'tel'
+      },
+      {
+        id: 'card_field', description: 'Payment card field', category: 'CARD', categoryLabel: 'Payment Card',
+        confidence: 0.95, token: '[CARD]', scope: 'field',
+        keywords: ['card', 'cc', 'creditcard', 'cardnumber', 'cvv', 'cvc'], autocompleteHints: ['cc-number', 'cc-csc'], inputTypeMatch: null
+      },
+      {
+        id: 'name_field', description: 'Person name field', category: 'NAME', categoryLabel: 'Person Name',
+        confidence: 0.85, token: '[PERSON_NAME]', scope: 'field',
+        keywords: ['name', 'username', 'user', 'fullname', 'firstname', 'lastname'], autocompleteHints: ['name', 'given-name', 'family-name', 'username'], inputTypeMatch: null
+      },
+      {
+        id: 'ssn_field', description: 'SSN field', category: 'SSN', categoryLabel: 'SSN',
+        confidence: 0.95, token: '[SSN]', scope: 'field',
+        keywords: ['ssn', 'socialsecurity'], autocompleteHints: [], inputTypeMatch: null
+      }
+    ],
+    textRules: [
+      {
+        id: 'email_text', description: 'Email address regex', category: 'EMAIL', categoryLabel: 'Email',
+        confidence: 0.95, token: '[EMAIL]', scope: 'text',
+        regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
+      },
+      {
+        id: 'phone_text', description: 'Phone number regex', category: 'PHONE', categoryLabel: 'Phone',
+        confidence: 0.90, token: '[PHONE]', scope: 'text',
+        regex: /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,4}/g
+      },
+      {
+        id: 'card_text', description: 'Credit card regex', category: 'CARD', categoryLabel: 'Payment Card',
+        confidence: 0.95, token: '[CARD]', scope: 'text',
+        regex: /\b(?:\d[\s\-]?){13,19}\b/g
+      },
+      {
+        id: 'ssn_text', description: 'SSN regex', category: 'SSN', categoryLabel: 'SSN',
+        confidence: 0.95, token: '[SSN]', scope: 'text',
+        regex: /\b\d{3}[\s\-]\d{2}[\s\-]\d{4}\b/g
+      }
+    ]
+  };
+
   var piiData       = null;
-  var compiledRules = null;
+  var compiledRules = DEFAULT_RULES;
 
   // --- NER bridge: delegates to background.js service worker ---
   var NER = {
@@ -50,7 +102,7 @@ var SensitivityDetector = (function () {
 
   // --- Rule loading ---
   function loadPiiPatterns(callback) {
-    if (piiData) { callback(); return; }
+    if (piiData) { if (callback) callback(); return; }
     var url = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
       ? chrome.runtime.getURL('data/pii-patterns.json')
       : 'data/pii-patterns.json';
@@ -62,14 +114,11 @@ var SensitivityDetector = (function () {
         compiledRules = compileRules(data);
         console.log('[SensitivityDetector] Loaded', compiledRules.fieldRules.length,
           'field rules and', compiledRules.textRules.length, 'text rules');
-        callback();
+        if (callback) callback();
       })
       .catch(function(err) {
-        console.error('[SensitivityDetector] CRITICAL: Failed to load pii-patterns.json:', err.message || err);
-        console.error('[SensitivityDetector] Protection is DEGRADED — falling back to empty ruleset');
-        piiData = { categories: {} };
-        compiledRules = { fieldRules: [], textRules: [] };
-        callback();
+        console.warn('[SensitivityDetector] Failed to load pii-patterns.json, using default ruleset');
+        if (callback) callback();
       });
   }
 
@@ -104,8 +153,10 @@ var SensitivityDetector = (function () {
   function classifyField(el) {
     if (el.tag !== 'input' && el.tag !== 'select' && el.tag !== 'textarea') return null;
     var bestMatch = null, bestConfidence = 0;
-    for (var i = 0; i < compiledRules.fieldRules.length; i++) {
-      var rule = compiledRules.fieldRules[i];
+    var rules = (compiledRules && compiledRules.fieldRules) ? compiledRules.fieldRules : DEFAULT_RULES.fieldRules;
+
+    for (var i = 0; i < rules.length; i++) {
+      var rule = rules[i];
       if (rule.inputTypeMatch && el.tag === 'input' && el.type === rule.inputTypeMatch) {
         if (rule.confidence > bestConfidence) { bestConfidence = rule.confidence; bestMatch = rule; }
       }
@@ -128,10 +179,12 @@ var SensitivityDetector = (function () {
         }
       }
     }
-    if (bestMatch) return { source: 'REGEX', ruleToken: bestMatch.token, confidence: bestConfidence, reason: bestMatch.description };
+    if (bestMatch) {
+      return { source: 'REGEX', ruleCategory: bestMatch.category, ruleId: bestMatch.id, ruleToken: bestMatch.token, confidence: bestConfidence, reason: bestMatch.description };
+    }
     var loose = [el.name, el.id, el.labelText].join(' ').toLowerCase();
     if (loose.includes('address') || loose.includes('personal') || loose.includes('bio')) {
-      return { source: 'HEURISTIC', ruleToken: '[PERSONAL_DATA]', confidence: 0.4, reason: 'Suspicious field context' };
+      return { source: 'HEURISTIC', ruleCategory: 'PERSONAL_DATA', ruleId: 'heuristic_data', ruleToken: '[PERSONAL_DATA]', confidence: 0.4, reason: 'Suspicious field context' };
     }
     return null;
   }
@@ -140,11 +193,13 @@ var SensitivityDetector = (function () {
     var text = ((el.visibleText || '') + ' ' + (el.value || '')).trim();
     if (!text) return [];
     var hits = [];
-    for (var i = 0; i < compiledRules.textRules.length; i++) {
-      var rule = compiledRules.textRules[i];
+    var rules = (compiledRules && compiledRules.textRules) ? compiledRules.textRules : DEFAULT_RULES.textRules;
+
+    for (var i = 0; i < rules.length; i++) {
+      var rule = rules[i];
       rule.regex.lastIndex = 0;
       if (rule.regex.test(text)) {
-        hits.push({ source: 'REGEX', ruleToken: rule.token, confidence: rule.confidence, reason: rule.description });
+        hits.push({ source: 'REGEX', ruleCategory: rule.category, ruleId: rule.id, ruleToken: rule.token, confidence: rule.confidence, reason: rule.description });
       }
     }
     return hits;
@@ -157,7 +212,16 @@ var SensitivityDetector = (function () {
     if (allHits.length === 0) return { sensitivity: 'SAFE', confidence: 0, ruleToken: null, source: null };
     var max  = allHits.reduce(function(a, b) { return a.confidence > b.confidence ? a : b; });
     var tier = max.confidence >= 0.8 ? 'HIGH_CONFIDENCE_PII' : 'LOW_CONFIDENCE_PII';
-    return { sensitivity: tier, confidence: max.confidence, ruleToken: max.ruleToken, source: max.source, reason: max.reason, allHits: allHits };
+    return {
+      sensitivity: tier,
+      confidence: max.confidence,
+      ruleToken: max.ruleToken,
+      ruleId: max.ruleId || '',
+      ruleCategory: max.ruleCategory || '',
+      source: max.source,
+      reason: max.reason,
+      allHits: allHits
+    };
   }
 
   // --- Contextual clustering ---
@@ -178,6 +242,7 @@ var SensitivityDetector = (function () {
         group.forEach(function(e) {
           if (e.tag === 'input' && e.sensitivity === 'SAFE') {
             e.sensitivity = 'LOW_CONFIDENCE_PII'; e.ruleToken = '[CLUSTERED_DATA]';
+            e.ruleCategory = 'CLUSTERED_DATA';
             e.reason = 'Clustered near sensitive fields'; e.source = 'CONTEXT'; e.confidence = 0.5;
           }
         });
@@ -187,20 +252,13 @@ var SensitivityDetector = (function () {
 
   // --- Public async API ---
 
-  /**
-   * Main classification entry point.
-   * Returns a Promise<Array> in extension context (NER enabled),
-   * or a plain Array in benchmark/test context (NER unavailable).
-   */
   function classifyElements(elements) {
-    // Sync fast path: no chrome.runtime — benchmark / unit test env
     if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
       var syncResults = elements.map(function(el) { return Object.assign({}, el, scoreElement(el, [])); });
       applyContextualClustering(syncResults);
       return syncResults;
     }
 
-    // Async path: NER per element, all in parallel
     var nerPromises = elements.map(function(el) {
       var text = ((el.visibleText || '') + ' ' + (el.value || '') + ' ' + (el.labelText || '')).trim();
       return text ? NER.classify(text) : Promise.resolve([]);
@@ -209,12 +267,13 @@ var SensitivityDetector = (function () {
     return Promise.all(nerPromises).then(function(nerPerEl) {
       var results = elements.map(function(el, i) {
         var nerHits = (nerPerEl[i] || [])
-          .filter(function(e) { return e.score >= 0.7; }) // reject low-confidence tokens
+          .filter(function(e) { return e.score >= 0.7; })
           .map(function(e) {
             return {
               source:     'NER',
               ruleToken:  NER.toInternalToken(e.entity_group),
-              confidence: Math.min(0.79, e.score), // NER capped at LOW tier; regex stays HIGH
+              ruleCategory: e.entity_group,
+              confidence: Math.min(0.79, e.score),
               reason:     'NER ' + e.entity_group + ' "' + (e.word || '') + '" (' + e.score.toFixed(2) + ')'
             };
           });
@@ -227,7 +286,6 @@ var SensitivityDetector = (function () {
 
   function classifyElementsWithCache(elements, callback) {
     var result = classifyElements(elements);
-    // Handle both sync (Array) and async (Promise) return
     if (result && typeof result.then === 'function') {
       result.then(function(r) { callback(r, { hits: 0, misses: elements.length }); });
     } else {
@@ -236,13 +294,13 @@ var SensitivityDetector = (function () {
   }
 
   function getTextPatterns() {
-    if (!compiledRules) return [];
-    return compiledRules.textRules.map(function(r) {
-      return { regex: new RegExp(r.regex.source, r.regex.flags), token: r.token };
+    var rules = (compiledRules && compiledRules.textRules) ? compiledRules.textRules : DEFAULT_RULES.textRules;
+    return rules.map(function(r) {
+      return { regex: new RegExp(r.regex.source, r.regex.flags), token: r.token, category: r.category };
     });
   }
 
-  function clearCache(callback) { callback(); }
+  function clearCache(callback) { if (callback) callback(); }
 
   return {
     loadPiiPatterns:           loadPiiPatterns,
