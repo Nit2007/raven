@@ -5,24 +5,15 @@ import { PiiDetectionMetadata } from '../perception/pii/piiDetector.js';
 import { PerceptionAdapter, ElementInfo } from '../integration/perceptionAdapter.js';
 import { Person1Bridge } from '../integration/person1Bridge.js';
 import { DetectionResult } from '../schema/detection.js';
+import { AgentController, AgentStatus } from '../agent/agentController.js';
+import { ValidatedCommand } from '../agent/actionExecutor.js';
 
 const captureManager = new CaptureManager();
 const pipeline = new LocalPerceptionPipeline();
+const controller = new AgentController({ maxIterations: 10, stabilizeDelayMs: 600 });
 
 let currentInput: PerceptionInput | null = null;
 let lastCaptureTimeMs = 0;
-
-type PopupUIState =
-  | 'ANALYZING'
-  | 'PROTECTED'
-  | 'THINKING'
-  | 'ACTION APPROVED'
-  | 'EXECUTING'
-  | 'COMPLETED'
-  | 'TRANSMISSION BLOCKED'
-  | 'SERVER UNAVAILABLE'
-  | 'ACTION REJECTED'
-  | 'ERROR';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const userGoalInput = document.getElementById('userGoalInput') as HTMLInputElement;
@@ -173,52 +164,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // State Management for Popup UI
-  const updateUIState = (state: PopupUIState, message?: string) => {
+  const updateUIState = (state: AgentStatus, message?: string) => {
     statusCard.className = 'status-card';
 
-    if (state === 'ANALYZING') {
+    if (state === 'ANALYZING' || state === 'PROTECTING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = '● Analyzing';
+      headerStatusDot.textContent = `● Step ${controller.currentIteration}/${controller.maxIterations}`;
       statusIcon.textContent = '⚡';
-      statusHeading.textContent = 'ANALYZING';
-      statusDesc.textContent = message || 'Analyzing viewport pixels and DOM structures locally...';
+      statusHeading.textContent = `STEP ${controller.currentIteration} / ${controller.maxIterations}`;
+      statusDesc.textContent = message || 'Analyzing viewport pixels & DOM structures locally...';
 
       serverStatusBadge.className = 'status-dot dot-protected';
       serverStatusBadge.textContent = '● Connected';
       serverNotice.textContent = 'RAVEN server is ready';
       serverNotice.style.color = 'var(--success-color)';
 
-      stepAnalysis.innerHTML = `<span class="check-mark">⏳</span> Local analysis running...`;
-    } else if (state === 'PROTECTED') {
-      statusCard.classList.add('status-card-safe');
-      headerStatusDot.className = 'status-dot dot-protected';
-      headerStatusDot.textContent = '● Protected';
-      statusIcon.textContent = '🛡️';
-      statusHeading.textContent = 'PROTECTED';
-      statusDesc.textContent = message || 'Sensitive elements protected locally.';
-
-      stepAnalysis.innerHTML = `<span class="check-mark">✓</span> Local analysis complete`;
-      stepProtected.innerHTML = `<span class="check-mark">✓</span> Sensitive content protected`;
-    } else if (state === 'THINKING') {
+      stepAnalysis.innerHTML = `<span class="check-mark">⏳</span> Step ${controller.currentIteration} analysis running...`;
+    } else if (state === 'SERVER_THINKING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = '● Thinking';
+      headerStatusDot.textContent = `● Thinking`;
       statusIcon.textContent = '🧠';
       statusHeading.textContent = 'THINKING';
-      statusDesc.textContent = message || 'Reasoning about the task goal with server AI...';
+      statusDesc.textContent = message || 'Reasoning about the task with server AI...';
 
       serverStatusBadge.className = 'status-dot dot-processing';
       serverStatusBadge.textContent = '● Processing';
-      serverNotice.textContent = 'Reasoning about the task...';
+      serverNotice.textContent = `Reasoning about step ${controller.currentIteration}...`;
       serverNotice.style.color = 'var(--warning-color)';
-    } else if (state === 'ACTION APPROVED') {
+    } else if (state === 'ACTION_APPROVED') {
       statusCard.classList.add('status-card-safe');
       headerStatusDot.className = 'status-dot dot-protected';
-      headerStatusDot.textContent = '● Action Approved';
+      headerStatusDot.textContent = `● Action Approved`;
       statusIcon.textContent = '✓';
       statusHeading.textContent = 'ACTION APPROVED';
-      statusDesc.textContent = message || 'Server reasoning complete and validated.';
+      statusDesc.textContent = message || 'Server action validated cleanly.';
 
       serverStatusBadge.className = 'status-dot dot-protected';
       serverStatusBadge.textContent = '✓ Action approved';
@@ -230,18 +211,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (state === 'EXECUTING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = '● Executing';
+      headerStatusDot.textContent = `● Executing`;
       statusIcon.textContent = '⚙️';
       statusHeading.textContent = 'EXECUTING';
-      statusDesc.textContent = message || 'Executing validated browser action...';
+      statusDesc.textContent = message || 'Executing action on page...';
+    } else if (state === 'OBSERVING') {
+      statusCard.classList.add('status-card-processing');
+      headerStatusDot.className = 'status-dot dot-processing';
+      headerStatusDot.textContent = `● Re-Observing`;
+      statusIcon.textContent = '🔍';
+      statusHeading.textContent = 'RE-OBSERVING PAGE';
+      statusDesc.textContent = message || 'Waiting for page to stabilize after action execution...';
     } else if (state === 'COMPLETED') {
       statusCard.classList.add('status-card-safe');
       headerStatusDot.className = 'status-dot dot-protected';
       headerStatusDot.textContent = '● Completed';
       statusIcon.textContent = '🎉';
-      statusHeading.textContent = 'COMPLETED';
-      statusDesc.textContent = message || 'Task executed successfully on current page.';
-    } else if (state === 'TRANSMISSION BLOCKED') {
+      statusHeading.textContent = 'TASK COMPLETED';
+      statusDesc.textContent = message || 'Task completed successfully.';
+    } else if (state === 'TRANSMISSION_BLOCKED') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
       headerStatusDot.textContent = '● Transmission Blocked';
@@ -256,7 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       stepGate.innerHTML = `<span style="color:var(--error-color)">✗</span> Outbound privacy check failed`;
       stepReady.innerHTML = `<span style="color:var(--error-color)">✗</span> Transmission blocked`;
-    } else if (state === 'SERVER UNAVAILABLE') {
+    } else if (state === 'SERVER_UNAVAILABLE') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
       headerStatusDot.textContent = '● Server Unavailable';
@@ -268,7 +256,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       serverStatusBadge.textContent = '● Unavailable';
       serverNotice.textContent = 'Cannot reach RAVEN server';
       serverNotice.style.color = 'var(--error-color)';
-    } else if (state === 'ACTION REJECTED') {
+    } else if (state === 'ACTION_REJECTED' || state === 'TARGET_NOT_FOUND') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
       headerStatusDot.textContent = '● Action Rejected';
@@ -280,17 +268,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       serverStatusBadge.textContent = '● Rejected';
       serverNotice.textContent = '🔴 Unsafe server command rejected';
       serverNotice.style.color = 'var(--error-color)';
-    } else if (state === 'ERROR') {
+    } else if (state === 'MAX_STEPS_REACHED') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
-      headerStatusDot.textContent = '● Error';
+      headerStatusDot.textContent = '● Max Steps Reached';
+      statusIcon.textContent = '⏹️';
+      statusHeading.textContent = 'MAX STEPS REACHED';
+      statusDesc.textContent = message || 'Task stopped: maximum agent steps reached (10/10).';
+    } else if (state === 'TASK_FAILED' || state === 'ERROR') {
+      statusCard.classList.add('status-card-blocked');
+      headerStatusDot.className = 'status-dot dot-blocked';
+      headerStatusDot.textContent = '● Task Failed';
       statusIcon.textContent = '❌';
-      statusHeading.textContent = 'ERROR';
-      statusDesc.textContent = message || 'An unexpected error occurred.';
+      statusHeading.textContent = 'TASK FAILED';
+      statusDesc.textContent = message || 'An unexpected error occurred during execution.';
     }
   };
 
-  // Helper to query active tab for live DOM elements
+  // Query DOM elements from active tab
   const queryLiveDomFromActiveTab = (): Promise<ElementInfo[]> => {
     return new Promise((resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
@@ -315,8 +310,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   };
 
-  // Helper to send action execution command to active tab content script
-  const dispatchActionToActiveTab = (command: any): Promise<{ success: boolean; message?: string; error?: string }> => {
+  // Run perception pipeline for observation step
+  const runPerceptionStep = async (): Promise<any> => {
+    const tStart = performance.now();
+    const capResult = await captureManager.captureVisibleViewport();
+    lastCaptureTimeMs = Math.round(performance.now() - tStart);
+
+    if (capResult.success && capResult.input) {
+      currentInput = capResult.input;
+      imgDimensionsEl.textContent = `${currentInput.width} x ${currentInput.height} px`;
+      coordSpaceEl.textContent = currentInput.coordinateSpace;
+      tCaptureEl.textContent = `${lastCaptureTimeMs} ms`;
+
+      previewImg.src = currentInput.image;
+      visualWrapper.style.display = 'block';
+
+      const perceptionRes = await pipeline.runLocalPerception(currentInput, previewImg);
+      currentDetections = perceptionRes.detections;
+      return perceptionRes;
+    }
+
+    return {
+      schemaVersion: '1.0.0', status: 'SUCCESS', generatedAt: Date.now(),
+      screenshot: { width: 1280, height: 720, coordinateSpace: 'SCREENSHOT' },
+      detections: [], counts: { faces: 0, ocrRegions: 0, piiCandidates: 0, visualObjects: 0, total: 0 },
+      timing: { captureMs: 10, faceMs: 10, ocrInitMs: 10, ocrInferenceMs: 10, normalizationMs: 1, piiMs: 1, fusionMs: 1, totalMs: 43 },
+      locality: { isLocal: true, externalAiUsed: false, networkUploadPerformed: false },
+      subsystems: { face: { status: 'SUCCESS' }, ocr: { status: 'SUCCESS' }, pii: { status: 'SUCCESS' } }
+    };
+  };
+
+  // Dispatch action to content script
+  const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<{ success: boolean; message?: string; error?: string }> => {
     return new Promise((resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
         resolve({ success: true, message: `Mock executed ${command.action}` });
@@ -340,7 +365,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   };
 
-  // Fallback mock DOM elements for standalone test pages
   function getFallbackDomElements(): ElementInfo[] {
     return [
       { tag: 'input', type: 'text', name: 'fullname', id: 'name-id', labelText: 'Full Name', value: 'John Doe', boundingBox: { x: 50, y: 100, width: 200, height: 30 } },
@@ -350,173 +374,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     ];
   }
 
-  // Main Pipeline & Execution Flow
-  const executePipeline = async () => {
+  // Main Autonomous Loop Executor
+  const executeAutonomousAgentLoop = async () => {
     errorBox.style.display = 'none';
     executionResultCard.style.display = 'none';
 
     const goal = userGoalInput.value.trim() || 'Click the Submit button';
     runIntegratedBtn.disabled = true;
 
-    // STEP 1: ANALYZING
-    updateUIState('ANALYZING', `Analyzing page & local visual features for goal: "${goal}"...`);
+    controller.initTask(goal);
 
-    const tStart = performance.now();
     try {
-      // 1. Capture Viewport
-      const capResult = await captureManager.captureVisibleViewport();
-      lastCaptureTimeMs = Math.round(performance.now() - tStart);
+      while (controller.currentIteration <= controller.maxIterations) {
+        const iterResult = await controller.executeIteration(
+          queryLiveDomFromActiveTab,
+          runPerceptionStep,
+          dispatchActionToActiveTab,
+          (status, msg) => {
+            updateUIState(status, msg);
+          }
+        );
 
-      if (capResult.success && capResult.input) {
-        currentInput = capResult.input;
-        imgDimensionsEl.textContent = `${currentInput.width} x ${currentInput.height} px`;
-        coordSpaceEl.textContent = currentInput.coordinateSpace;
-        tCaptureEl.textContent = `${lastCaptureTimeMs} ms`;
-
-        previewImg.src = currentInput.image;
-        visualWrapper.style.display = 'block';
-      }
-
-      // 2. Person 2 Local Perception Pipeline
-      let perceptionResult: any = null;
-      if (currentInput) {
-        perceptionResult = await pipeline.runLocalPerception(currentInput, previewImg);
-        currentDetections = perceptionResult.detections;
-      } else {
-        perceptionResult = {
-          schemaVersion: '1.0.0', status: 'SUCCESS', generatedAt: Date.now(),
-          screenshot: { width: 1280, height: 720, coordinateSpace: 'SCREENSHOT' },
-          detections: [], counts: { faces: 0, ocrRegions: 0, piiCandidates: 0, visualObjects: 0, total: 0 },
-          timing: { captureMs: 10, faceMs: 10, ocrInitMs: 10, ocrInferenceMs: 10, normalizationMs: 1, piiMs: 1, fusionMs: 1, totalMs: 43 },
-          locality: { isLocal: true, externalAiUsed: false, networkUploadPerformed: false },
-          subsystems: { face: { status: 'SUCCESS' }, ocr: { status: 'SUCCESS' }, pii: { status: 'SUCCESS' } }
-        };
-      }
-
-      // 3. Extract Live DOM Elements from active tab
-      const rawDomElements = await queryLiveDomFromActiveTab();
-
-      // 4. Person 1 DOM Sensitivity Classification
-      const classifiedDomElements = Person1Bridge.SensitivityDetector.classifyElements(rawDomElements);
-
-      // 5. PerceptionAdapter Fusion (Person 2 ML + Person 1 DOM)
-      const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(classifiedDomElements, perceptionResult);
-
-      // 6. Person 1 Redaction Engine Enforcement
-      const redactedElements = Person1Bridge.RedactionEngine.redactElements(integratedElements);
-
-      // 7. Person 1 Context Sanitization
-      const sanitizedPayload = Person1Bridge.Sanitizer.sanitizeContext(redactedElements);
-
-      // Calculate Strict Redaction Counts
-      const actualRedactedElements = sanitizedPayload.elements.filter((e: any) => e.redacted === true);
-      const totalRedactedCount = actualRedactedElements.length;
-
-      const facesCount = sanitizedPayload.elements.filter((e: any) => e.tag === 'visual-face' || e.ruleCategory === 'BIOMETRIC_FACE').length;
-      const docsCount = sanitizedPayload.elements.filter((e: any) => e.tag === 'visual-document' || e.ruleCategory === 'SENSITIVE_DOCUMENT').length;
-      const piiCount = Math.max(0, totalRedactedCount - facesCount - docsCount);
-
-      catFacesRow.style.display = facesCount > 0 ? 'flex' : 'none';
-      catFacesVal.textContent = String(facesCount);
-
-      catPiiRow.style.display = piiCount > 0 ? 'flex' : 'none';
-      catPiiVal.textContent = String(piiCount);
-
-      catDocsRow.style.display = docsCount > 0 ? 'flex' : 'none';
-      catDocsVal.textContent = String(docsCount);
-
-      catEmptyRow.style.display = totalRedactedCount === 0 ? 'block' : 'none';
-
-      // STEP 2: PROTECTED
-      updateUIState('PROTECTED', `${totalRedactedCount} sensitive element${totalRedactedCount === 1 ? '' : 's'} protected locally. Outbound privacy check running...`);
-
-      // 8. Authoritative Outbound Privacy Gate Check (BEFORE network request)
-      const gateCheck = Person1Bridge.Sanitizer.outboundCheck(sanitizedPayload);
-
-      if (!gateCheck.safe) {
-        // HARD BLOCK — DO NOT CONTACT SERVER
-        updateUIState('TRANSMISSION BLOCKED', 'Privacy verification failed. Sensitive data detected in outbound payload. Transmission blocked by RAVEN gate.');
-        resultTaskText.textContent = `"${goal}"`;
-        resultStatusText.textContent = '✗ Transmission Blocked by Privacy Gate';
-        resultStatusText.style.color = 'var(--error-color)';
-        executionResultCard.style.display = 'block';
-        return;
-      }
-
-      // STEP 3: THINKING (Gate passed -> sending to server)
-      updateUIState('THINKING', `Outbound gate passed. Reasoning about "${goal}" via RAVEN agent server...`);
-
-      // 9. Build Outbound Payload and Send to Server (POST /agent/act)
-      currentJsonPayload = Person1Bridge.ServerAdapter.buildOutboundPayload(sanitizedPayload, goal);
-      const serverResponse = await Person1Bridge.ServerAdapter.sendToServer(currentJsonPayload);
-
-      if (!serverResponse.ok) {
-        if (serverResponse.status === 400) {
-          updateUIState('ACTION REJECTED', `Server rejected request: ${serverResponse.body?.error || 'Security check failed'}`);
+        if (iterResult.done) {
           resultTaskText.textContent = `"${goal}"`;
-          resultStatusText.textContent = '✗ Request Rejected by Server';
-          resultStatusText.style.color = 'var(--error-color)';
-        } else {
-          updateUIState('SERVER UNAVAILABLE', `Cannot connect to RAVEN server endpoint. Make sure server is running on port 8000.`);
-          resultTaskText.textContent = `"${goal}"`;
-          resultStatusText.textContent = '✗ Server Unavailable';
-          resultStatusText.style.color = 'var(--error-color)';
+          resultStatusText.textContent = iterResult.success
+            ? `✓ ${iterResult.message || 'Task completed'}`
+            : `✗ ${iterResult.message || 'Task stopped'}`;
+
+          resultStatusText.style.color = iterResult.success ? 'var(--success-color)' : 'var(--error-color)';
+          executionResultCard.style.display = 'block';
+          break;
         }
-        executionResultCard.style.display = 'block';
-        return;
       }
-
-      // 10. Receive and Validate Server Response
-      const validatedCommand = Person1Bridge.ServerAdapter.receiveServerCommand(
-        serverResponse,
-        currentJsonPayload.screen_state.elements
-      );
-
-      if (!validatedCommand.valid) {
-        updateUIState('ACTION REJECTED', `Server action rejected: ${validatedCommand.errors.join('; ')}`);
-        resultTaskText.textContent = `"${goal}"`;
-        resultStatusText.textContent = `✗ Action Rejected (${validatedCommand.errors[0] || 'Unsafe'})`;
-        resultStatusText.style.color = 'var(--error-color)';
-        executionResultCard.style.display = 'block';
-        return;
-      }
-
-      // STEP 4: ACTION APPROVED
-      updateUIState('ACTION APPROVED', `Server reasoning complete. Action approved: ${validatedCommand.command.action}`);
-
-      // STEP 5: EXECUTING
-      updateUIState('EXECUTING', `Executing ${validatedCommand.command.action} action on page...`);
-
-      const execResult = await dispatchActionToActiveTab(validatedCommand.command);
-
-      // STEP 6: COMPLETED
-      const finalMsg = execResult.message || `✓ ${validatedCommand.command.action} completed`;
-      updateUIState('COMPLETED', `Task completed: ${finalMsg}`);
-
-      resultTaskText.textContent = `"${goal}"`;
-      resultStatusText.textContent = `✓ ${finalMsg}`;
-      resultStatusText.style.color = 'var(--success-color)';
-      executionResultCard.style.display = 'block';
-
-      // Update Diagnostics Details Views
-      p1RedactedCountEl.textContent = `${totalRedactedCount} sensitive elements masked`;
-      p1OutboundStatusEl.textContent = gateCheck.safe ? 'SAFE (0 Leaks)' : 'LEAKS BLOCKED';
-
-      jsonView.textContent = JSON.stringify(currentJsonPayload, null, 2);
-      renderBboxes(currentDetections);
-
-      detectionsView.innerHTML = currentDetections.map(d => {
-        return `<div style="padding:3px 0; border-bottom:1px dashed #313244;">` +
-          `[${d.type}] Conf: ${(d.confidence * 100).toFixed(0)}% | BBox: {x:${d.bbox.x},y:${d.bbox.y},w:${d.bbox.width},h:${d.bbox.height}}` +
-          `</div>`;
-      }).join('\n') || 'No detections.';
-
-      redactedView.innerHTML = sanitizedPayload.elements.map((e: any) => {
-        return `<div style="padding:3px 0; border-bottom:1px dashed #313244; color:${e.redacted ? 'var(--success-color)' : 'var(--info-color)'}">` +
-          `[<${e.tag}> id="${e.id || 'N/A'}"] Protected: <strong>${e.redacted}</strong> | Output: <code>"${e.value || e.visibleText || ''}"</code>` +
-          `</div>`;
-      }).join('\n');
-
     } catch (err) {
       updateUIState('ERROR', err instanceof Error ? err.message : String(err));
       errorBox.textContent = err instanceof Error ? err.message : String(err);
@@ -526,14 +415,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  runIntegratedBtn.addEventListener('click', executePipeline);
+  runIntegratedBtn.addEventListener('click', executeAutonomousAgentLoop);
   userGoalInput.addEventListener('keydown', (evt) => {
     if (evt.key === 'Enter') {
-      executePipeline();
+      executeAutonomousAgentLoop();
     }
   });
 
-  // Render Bounding Boxes on Overlay Canvas
+  // Render Bounding Boxes on Canvas Overlay
   function renderBboxes(detections: DetectionResult[]) {
     if (!currentInput) return;
 

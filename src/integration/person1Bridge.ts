@@ -228,17 +228,20 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
       const actionObj = body.action || {};
       let rawActionType = String(actionObj.action_type || body.action || 'none').toUpperCase();
 
-      if (rawActionType === 'WAIT' || rawActionType === 'DONE' || rawActionType === 'NONE') {
+      if (rawActionType === 'WAIT' || rawActionType === 'NONE') {
         rawActionType = 'NONE';
       }
+      if (rawActionType === 'COMPLETED' || rawActionType === 'FINISH') {
+        rawActionType = 'DONE';
+      }
 
-      const VALID_SET = new Set(['CLICK', 'TYPE', 'SCROLL', 'SELECT', 'NONE']);
+      const VALID_SET = new Set(['CLICK', 'TYPE', 'SCROLL', 'SELECT', 'NONE', 'DONE']);
       if (!VALID_SET.has(rawActionType)) {
         errors.push(`Unknown action type: "${rawActionType}"`);
       }
 
       const targetId = actionObj.target_element_id || body.targetSelector || null;
-      if (rawActionType !== 'NONE' && targetId && sentElements && Array.isArray(sentElements)) {
+      if (rawActionType !== 'NONE' && rawActionType !== 'DONE' && rawActionType !== 'SCROLL' && targetId && sentElements && Array.isArray(sentElements)) {
         const found = sentElements.some((el: any) => String(el.id) === String(targetId) || String(el.dom_selector) === String(targetId));
         if (!found) {
           errors.push(`Hallucinated target element ID: "${targetId}" is not in current screen elements`);
@@ -275,8 +278,8 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
 }
 
 export const Person1Bridge = {
-  SensitivityDetector: rawDetector,
-  RedactionEngine: rawRedactionEngine,
-  Sanitizer: rawSanitizer,
-  ServerAdapter: rawServerAdapter
+  get SensitivityDetector() { return (globalThis as any).SensitivityDetector || rawDetector; },
+  get RedactionEngine() { return (globalThis as any).RedactionEngine || rawRedactionEngine; },
+  get Sanitizer() { return (globalThis as any).Sanitizer || rawSanitizer; },
+  get ServerAdapter() { return (globalThis as any).ServerAdapter || rawServerAdapter; }
 };
