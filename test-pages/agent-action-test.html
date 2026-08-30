@@ -2,34 +2,79 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>RAVEN M9.4 — Real Action Test Page</title>
+  <title>RAVEN M9.6 — Comprehensive Real Action Acceptance Page</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; background: #0f0f17; color: #fff; }
-    .card { background: #1a1b26; padding: 24px; border-radius: 12px; border: 1px solid #2f334d; max-width: 500px; }
-    button { background: #7aa2f7; color: #0f0f17; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; }
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; background: #0f0f17; color: #fff; min-height: 2500px; }
+    .card { background: #1a1b26; padding: 24px; border-radius: 12px; border: 1px solid #2f334d; max-width: 600px; margin-bottom: 30px; }
+    button { background: #7aa2f7; color: #0f0f17; border: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; margin-right: 10px; }
     button:hover { background: #89ddff; }
-    .status-box { margin-top: 20px; padding: 16px; border-radius: 6px; background: #24283b; font-size: 16px; font-weight: bold; border: 1px solid #414868; }
+    input { background: #24283b; border: 1px solid #414868; color: #fff; padding: 12px; border-radius: 6px; font-size: 15px; width: 250px; margin-right: 10px; }
+    .status-box { margin-top: 15px; padding: 16px; border-radius: 6px; background: #24283b; font-size: 15px; font-weight: bold; border: 1px solid #414868; }
     .status-success { background: #132a24; color: #73daca; border: 1px solid #73daca; }
+    .scroll-content { margin-top: 400px; padding: 24px; background: #1f2335; border-radius: 12px; border: 1px dashed #7aa2f7; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>RAVEN Real Browser Action Test</h2>
-    <p>Task: <strong>Click the Login button</strong></p>
+    <h2>RAVEN Acceptance Test Suite (M9.6)</h2>
     
-    <button id="login-test">Login</button>
-    
-    <div id="status" class="status-box" data-clicked="NO">Login button clicked: NO</div>
+    <div style="margin-bottom: 20px;">
+      <p>1. Click Test Target:</p>
+      <button id="login-test">Login</button>
+      <div id="status" class="status-box" data-clicked="NO">Login button clicked: NO</div>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <p>2. Type & Search Test Target:</p>
+      <input id="search-box" type="text" placeholder="Search box" />
+      <button id="search-btn">Search</button>
+      <div id="search-status" class="status-box" data-searched="NO">Search query: (none)</div>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+      <p>3. Scroll Position Indicator:</p>
+      <div id="scroll-status" class="status-box" data-scroll-y="0">Scroll Y Position: 0px</div>
+    </div>
+  </div>
+
+  <div class="scroll-content">
+    <h3>Middle Page Section</h3>
+    <p>This content requires scrolling down to view.</p>
+  </div>
+
+  <div class="scroll-content" style="margin-top: 800px;">
+    <h3>Bottom Page Footer</h3>
+    <p>End of test page content.</p>
   </div>
 
   <script>
     const btn = document.getElementById('login-test');
     const statusDiv = document.getElementById('status');
+    const searchInput = document.getElementById('search-box');
+    const searchBtn = document.getElementById('search-btn');
+    const searchStatusDiv = document.getElementById('search-status');
+    const scrollStatusDiv = document.getElementById('scroll-status');
 
     btn.addEventListener('click', () => {
       statusDiv.setAttribute('data-clicked', 'YES');
       statusDiv.textContent = 'Login button clicked: YES (Login button clicked successfully)';
       statusDiv.className = 'status-box status-success';
+    });
+
+    searchBtn.addEventListener('click', () => {
+      const query = searchInput.value;
+      searchStatusDiv.setAttribute('data-searched', 'YES');
+      searchStatusDiv.textContent = `Search query: ${query || '(empty)'} (Search clicked successfully)`;
+      searchStatusDiv.className = 'status-box status-success';
+    });
+
+    window.addEventListener('scroll', () => {
+      const y = Math.round(window.scrollY);
+      scrollStatusDiv.setAttribute('data-scroll-y', y.toString());
+      scrollStatusDiv.textContent = `Scroll Y Position: ${y}px`;
+      if (y > 100) {
+        scrollStatusDiv.className = 'status-box status-success';
+      }
     });
   </script>
 </body>

@@ -1,180 +1,130 @@
 /**
- * Content script running inside web pages.
- * Handles DOM element extraction for analysis, PING handshakes, and strict real browser action execution.
- * M9.3 — Action Dispatch Channel, Logging & Execution Engine.
+ * Content Script — Real browser DOM extraction & Action Executor.
+ * Runs inside target web page context with direct DOM access.
  */
 
-(() => {
-  function getViewportMeta() {
-    return {
-      width: window.innerWidth,
-      height: window.innerHeight,
-      devicePixelRatio: window.devicePixelRatio || 1
-    };
+import { ElementInfo } from '../integration/perceptionAdapter.js';
+import { ValidatedCommand, ActionReceipt } from '../agent/actionExecutor.js';
+
+(function () {
+  if ((window as any).__RAVEN_CONTENT_INITIALIZED__) {
+    console.log('[RAVEN Content Script] Already initialized in tab.');
+    return;
   }
+  (window as any).__RAVEN_CONTENT_INITIALIZED__ = true;
 
-  // Extract raw DOM HTMLElement nodes list in document order
-  function extractRawDomNodeList(): HTMLElement[] {
-    const rawElements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], h1, h2, h3, p, span, form, div'));
-    const nodes: HTMLElement[] = [];
-    const maxScan = Math.min(rawElements.length, 500);
+  console.log('[RAVEN Content Script] Initializing content script...');
 
-    for (let i = 0; i < maxScan; i++) {
-      const el = rawElements[i] as HTMLElement;
-      if (!el) continue;
+  /**
+   * Extract visible, interactive, or text-bearing DOM elements from the live page.
+   */
+  function extractLiveDomElements(): ElementInfo[] {
+    const rawNodes = extractRawDomNodeList();
+    const results: ElementInfo[] = [];
 
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) continue;
-      if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) continue;
+    rawNodes.forEach((node, idx) => {
+      const rect = node.getBoundingClientRect();
+      const textVal = (node.textContent || (node as HTMLInputElement).value || (node as HTMLInputElement).placeholder || '').trim();
+      const isInput = node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT';
+      const isClickable = node.tagName === 'BUTTON' || node.tagName === 'A' || node.getAttribute('role') === 'button' || isInput;
 
-      const style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') < 0.05) continue;
-
-      nodes.push(el);
-    }
-    return nodes;
-  }
-
-  // Extract visible interactive & structured DOM elements for observation JSON payload
-  function extractLiveDomElements() {
-    const nodes = extractRawDomNodeList();
-    return nodes.map((el, idx) => {
-      const tag = el.tagName.toLowerCase();
-      const type = (el as HTMLInputElement).type || null;
-      const name = (el as HTMLInputElement).name || null;
-      const id = el.id || null;
-      const placeholder = (el as HTMLInputElement).placeholder || null;
-      
-      let labelText = null;
-      if (id) {
-        const labelEl = document.querySelector(`label[for="${id}"]`);
-        if (labelEl) labelText = labelEl.textContent?.trim() || null;
-      }
-      if (!labelText && el.parentElement?.tagName.toLowerCase() === 'label') {
-        labelText = el.parentElement.textContent?.trim() || null;
-      }
-
-      let visibleText = el.textContent?.trim() || null;
-      if (tag === 'input' || tag === 'textarea') {
-        visibleText = (el as HTMLInputElement).value || placeholder || visibleText;
-      }
-
-      const interactive = ['a', 'button', 'input', 'select', 'textarea'].includes(tag) || el.getAttribute('role') !== null || el.hasAttribute('onclick');
-
-      const rect = el.getBoundingClientRect();
-
-      return {
-        tag,
-        type,
-        name,
-        id: id || `el_${idx}`,
-        placeholder,
-        labelText,
-        visibleText: visibleText ? visibleText.substring(0, 150) : null,
-        value: (el as HTMLInputElement).value || null,
+      results.push({
+        tag: node.tagName.toLowerCase(),
+        role: node.getAttribute('role') || (isInput ? 'input' : (node.tagName === 'A' ? 'link' : node.tagName.toLowerCase())),
+        type: (node as HTMLInputElement).type || node.tagName.toLowerCase(),
+        name: node.getAttribute('name') || undefined,
+        id: node.id || `el_${idx}`,
+        placeholder: (node as HTMLInputElement).placeholder || undefined,
+        labelText: undefined,
+        visibleText: textVal.slice(0, 100),
+        value: (node as HTMLInputElement).value || undefined,
         boundingBox: {
-          x: Math.round(rect.left + window.scrollX),
-          y: Math.round(rect.top + window.scrollY),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height)
+          x: Math.max(0, rect.left),
+          y: Math.max(0, rect.top),
+          width: Math.max(0, rect.width),
+          height: Math.max(0, rect.height)
         },
-        interactive
-      };
+        interactive: isClickable
+      });
+    });
+
+    return results;
+  }
+
+  function extractRawDomNodeList(): HTMLElement[] {
+    const selector = 'button, a, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="menuitem"], [tabindex]:not([tabindex="-1"])';
+    const all = Array.from(document.querySelectorAll<HTMLElement>(selector));
+
+    return all.filter(el => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+      return isVisible;
     });
   }
 
-  // Find target element by ID, selector, synthetic index (el_X), or attribute
-  function findTargetElement(selectorOrId: string | null): HTMLElement | null {
-    if (!selectorOrId) return null;
+  /**
+   * Find target DOM element by ID, selector, name, value, text content, or synthetic index.
+   */
+  function findTargetElement(targetSelector: string | null): HTMLElement | null {
+    if (!targetSelector) return null;
 
-    const clean = selectorOrId.trim();
-    console.log('[RAVEN Content Script] LOOKING FOR TARGET', clean);
+    const lowerTarget = targetSelector.toLowerCase();
 
-    // 1. Synthetic Index match (e.g. "el_3" or "3")
-    const elIndexMatch = clean.match(/^el_(\d+)$/i) || clean.match(/^(\d+)$/);
-    if (elIndexMatch) {
-      const targetIdx = parseInt(elIndexMatch[1], 10);
-      const liveNodes = extractRawDomNodeList();
-      if (targetIdx >= 0 && targetIdx < liveNodes.length) {
-        console.log(`[RAVEN Content Script] Matched synthetic index "${clean}" to live DOM node #${targetIdx}:`, liveNodes[targetIdx]);
-        return liveNodes[targetIdx];
+    // 1. Synthetic Index matching (el_X)
+    const indexMatch = targetSelector.match(/^el_(\d+)$/i);
+    if (indexMatch) {
+      const idx = parseInt(indexMatch[1], 10);
+      const rawNodes = extractRawDomNodeList();
+      if (idx >= 0 && idx < rawNodes.length) {
+        console.log(`[RAVEN Content Script] Resolved synthetic target index "el_${idx}" to <${rawNodes[idx].tagName.toLowerCase()} id="${rawNodes[idx].id}">`);
+        return rawNodes[idx];
       }
     }
 
-    // 2. Direct ID match
-    let el = document.getElementById(clean);
-    if (el) return el;
-
-    // 3. Query Selector match
-    try {
-      el = document.querySelector(clean);
-      if (el) return el;
-    } catch (_) {
-      // Ignore invalid CSS selector syntax
+    // 2. Pure numeric index
+    if (/^\d+$/.test(targetSelector)) {
+      const idx = parseInt(targetSelector, 10);
+      const rawNodes = extractRawDomNodeList();
+      if (idx >= 0 && idx < rawNodes.length) {
+        return rawNodes[idx];
+      }
     }
 
-    // 4. Match by name, data-id, or value attribute
+    // 3. Direct ID lookup
+    const elById = document.getElementById(targetSelector);
+    if (elById) return elById;
+
+    // 4. CSS Selector query
     try {
-      el = document.querySelector(`[name="${clean}"]`) ||
-           document.querySelector(`[data-id="${clean}"]`) ||
-           document.querySelector(`[id="${clean}"]`) ||
-           document.querySelector(`[value="${clean}"]`);
-      if (el) return el;
+      const elByCss = document.querySelector<HTMLElement>(targetSelector);
+      if (elByCss) return elByCss;
     } catch (_) {}
 
-    // 5. Match by exact or partial button/input text or value (Case-insensitive)
-    const lowerClean = clean.toLowerCase();
+    // 5. Name or value attribute lookup
+    const elByName = document.querySelector<HTMLElement>(`[name="${targetSelector}"], [value="${targetSelector}"]`);
+    if (elByName) return elByName;
+
+    // 6. Text content or button role search
     const candidates = extractRawDomNodeList();
-
     for (const cand of candidates) {
-      const id = (cand.id || '').toLowerCase();
-      const name = ((cand as HTMLInputElement).name || '').toLowerCase();
-      const text = (cand.textContent || '').trim().toLowerCase();
-      const val = ((cand as HTMLInputElement).value || '').trim().toLowerCase();
-      const placeholder = ((cand as HTMLInputElement).placeholder || '').trim().toLowerCase();
-
-      if (id === lowerClean || name === lowerClean) {
-        return cand;
-      }
-      if (text && (text === lowerClean || text.includes(lowerClean))) {
-        return cand;
-      }
-      if (val && (val === lowerClean || val.includes(lowerClean))) {
-        return cand;
-      }
-      if (placeholder && placeholder.includes(lowerClean)) {
-        return cand;
-      }
-    }
-
-    // 6. Fallback for login buttons (e.g., Codeforces "Enter" / "Login" submit buttons)
-    if (lowerClean.includes('login') || lowerClean.includes('submit') || lowerClean.includes('enter') || lowerClean.includes('sign in')) {
-      const submitBtn = document.querySelector('input[type="submit"], button[type="submit"], input.submit, button.submit') as HTMLElement;
-      if (submitBtn) return submitBtn;
+      const text = (cand.textContent || (cand as HTMLInputElement).value || '').trim().toLowerCase();
+      if (text && text === lowerTarget) return cand;
+      if (text && text.includes(lowerTarget)) return cand;
     }
 
     return null;
   }
 
-  // Strictly execute validated browser action and return ActionReceipt
-  function executeValidatedAction(command: any) {
+  /**
+   * Execute validated action on target DOM element with strict real browser dispatch and action-specific verification.
+   */
+  async function executeValidatedActionAsync(command: ValidatedCommand): Promise<ActionReceipt> {
     const actionType = String(command.action || 'NONE').toUpperCase();
-    const targetSelector = command.targetSelector || null;
-    const value = command.value || null;
+    const targetSelector = command.targetSelector;
+    const value = command.value;
 
-    console.log(`[RAVEN Content Script] Processing EXECUTE_ACTION | Action: ${actionType} | Target: ${targetSelector || 'NONE'}`);
-
-    if (actionType === 'NONE' || actionType === 'DONE') {
-      return {
-        success: true,
-        action: actionType,
-        target_element_id: targetSelector,
-        execution: 'REAL_BROWSER',
-        dispatched: false,
-        verified: true,
-        message: actionType === 'DONE' ? 'Task finished by server decision' : 'No browser action required'
-      };
-    }
+    console.log(`[RAVEN Content Script] Executing real action: ${actionType} on target: "${targetSelector || 'NONE'}"`);
 
     const targetEl = findTargetElement(targetSelector);
     console.log('[RAVEN TRACE 12] Target found', { found: Boolean(targetEl) });
@@ -195,18 +145,15 @@
 
       console.log(`[RAVEN Content Script] Target element found: <${targetEl.tagName.toLowerCase()} id="${targetEl.id}" class="${targetEl.className}">`);
 
-      // Scroll into view & focus
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       targetEl.focus();
 
-      // Visually highlight element briefly
       const prevOutline = targetEl.style.outline;
       targetEl.style.outline = '3px solid #a6e3a1';
       setTimeout(() => { targetEl.style.outline = prevOutline; }, 1500);
 
       console.log('[RAVEN TRACE 13] Performing real click');
 
-      // Dispatch real mouse events
       const mouseEvents = ['pointerdown', 'mousedown', 'mouseup', 'click'];
       mouseEvents.forEach(evtName => {
         targetEl.dispatchEvent(new MouseEvent(evtName, { bubbles: true, cancelable: true, view: window }));
@@ -219,7 +166,6 @@
       console.log('[RAVEN TRACE 14] Click completed');
 
       const label = targetEl.textContent?.trim() || (targetEl as HTMLInputElement).value || targetSelector || 'element';
-      console.log(`[RAVEN Content Script] Real click dispatched cleanly on element "${label}"`);
 
       return {
         success: true,
@@ -253,33 +199,44 @@
       targetEl.dispatchEvent(new Event('input', { bubbles: true }));
       targetEl.dispatchEvent(new Event('change', { bubbles: true }));
 
-      console.log(`[RAVEN Content Script] Typed text into target "${targetSelector}"`);
+      const currentValue = (targetEl as HTMLInputElement).value;
+      const typeVerified = currentValue === (value || '');
+
+      console.log(`[RAVEN Content Script] TYPE VERIFICATION`, { expected: value, actual: currentValue, verified: typeVerified });
 
       return {
-        success: true,
+        success: typeVerified,
         action: 'TYPE',
         target_element_id: targetSelector,
         execution: 'REAL_BROWSER',
         dispatched: true,
-        verified: true,
-        message: `Typed text into "${targetSelector}"`
+        verified: typeVerified,
+        message: `Typed text "${value}" into "${targetSelector}"`
       };
     }
 
     if (actionType === 'SCROLL') {
+      const beforeScrollY = window.scrollY;
       if (targetEl) {
         targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       } else {
-        window.scrollBy({ top: 300, behavior: 'smooth' });
+        window.scrollBy({ top: 600, behavior: 'smooth' });
       }
+
+      await new Promise(r => setTimeout(r, 150));
+      const afterScrollY = window.scrollY;
+      const scrollChanged = Math.abs(afterScrollY - beforeScrollY) > 5;
+
+      console.log('[RAVEN Content Script] SCROLL VERIFICATION', { beforeScrollY, afterScrollY, scrollChanged });
+
       return {
         success: true,
         action: 'SCROLL',
         target_element_id: targetSelector,
         execution: 'REAL_BROWSER',
         dispatched: true,
-        verified: true,
-        message: 'Scrolled page'
+        verified: scrollChanged || (afterScrollY > 0),
+        message: `Scrolled page (Y: ${beforeScrollY}px -> ${afterScrollY}px)`
       };
     }
 
@@ -316,7 +273,7 @@
         target_element_id: targetSelector,
         execution: 'REAL_BROWSER',
         dispatched: true,
-        verified: true,
+        verified: matched,
         message: matched ? `Selected "${value}" in <select>` : `Selected option on target`
       };
     }
@@ -356,15 +313,15 @@
     }
 
     if (message.type === 'EXECUTE_ACTION') {
-      try {
-        console.log('[RAVEN TRACE 11] EXECUTE_ACTION received', {
-          action: message.command?.action,
-          target: message.command?.targetSelector
-        });
-        const result = executeValidatedAction(message.command);
+      console.log('[RAVEN TRACE 11] EXECUTE_ACTION received', {
+        action: message.command?.action,
+        target: message.command?.targetSelector
+      });
+
+      executeValidatedActionAsync(message.command).then(result => {
         console.log('[RAVEN Content Script] SENDING ACTION RESPONSE', result);
         sendResponse(result);
-      } catch (err) {
+      }).catch(err => {
         console.error('[RAVEN Content Script] ACTION HANDLER ERROR:', err);
         sendResponse({
           success: false,
@@ -375,7 +332,8 @@
           verified: false,
           error: `ACTION_HANDLER_FAILED: ${err instanceof Error ? err.message : String(err)}`
         });
-      }
+      });
+
       return true;
     }
 
