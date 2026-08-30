@@ -1,0 +1,37 @@
+{
+  "name": "sih2026-local-perception",
+  "version": "0.1.0",
+  "description": "AI-Powered On-device Visual Perception Layer for Lightweight Browser Agents (Person 2 - SIH 2026 PS 26171)",
+  "type": "module",
+  "main": "dist/src/background/background.js",
+  "scripts": {
+    "build:tsc": "npx tsc",
+    "build:content": "npx esbuild src/content/content.ts --bundle --format=iife --target=es2022 --outfile=dist/src/content/content.js",
+    "build:popup": "npx esbuild src/popup/popup.ts --bundle --format=iife --target=es2022 --outfile=dist/src/popup/popup.js",
+    "build:background": "npx esbuild src/background/background.ts --bundle --format=iife --target=es2022 --outfile=dist/src/background/background.js",
+    "build:offscreen": "npx esbuild src/offscreen/offscreen.ts --bundle --format=iife --target=es2022 --outfile=dist/src/offscreen/offscreen.js",
+    "build": "npm run build:tsc && npm run build:content && npm run build:popup && npm run build:background && npm run build:offscreen",
+    "watch": "npx tsc --watch",
+    "test": "npm run build && node --test dist/test/*.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "on-device-ml",
+    "visual-perception",
+    "privacy",
+    "sih2026"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/chrome": "^0.0.280",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@mediapipe/face_detection": "^0.4.1646425229",
+    "@tensorflow/tfjs-core": "^4.20.0",
+    "tesseract.js": "^5.1.0"
+  }
+}

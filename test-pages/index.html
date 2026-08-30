@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Local Visual Perception Agent — Synthetic Test Suite (Person 2)</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 30px;
+      background-color: #f4f6f9;
+      color: #333;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    h2 { margin-top: 0; color: #1a73e8; }
+    .pii-box {
+      border: 1px dashed #d93025;
+      padding: 10px;
+      background: #fce8e6;
+      border-radius: 4px;
+    }
+    button {
+      background-color: #1a73e8;
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      font-size: 15px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background-color: #1557b0; }
+    pre {
+      background: #202124;
+      color: #38d9a9;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>PS 26171 — Local Perception Synthetic Test Page</h1>
+  <p>This local test environment validates local OCR, Face Detection, and PII candidate extraction on-device.</p>
+
+  <button id="runPerceptionBtn">Run On-Device Local Perception</button>
+
+  <div class="grid" style="margin-top: 20px;">
+    <div class="card">
+      <h2>Section 1: PII Candidate Text</h2>
+      <div class="pii-box">
+        <p><strong>Email Address:</strong> alice.smith@example.org</p>
+        <p><strong>Phone Number:</strong> +1-555-019-2834</p>
+        <p><strong>Fake SSN:</strong> 987-65-4321</p>
+        <p><strong>Credit Card:</strong> 4532 1122 3344 5566</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Section 2: Rendered Visual Canvas</h2>
+      <canvas id="testCanvas" width="300" height="150" style="border: 1px solid #ccc;"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Section 3: Perception Fusion Output (DETECTION_SCHEMA)</h2>
+    <pre id="outputJson">// Run perception to inspect generated detection schema output...</pre>
+  </div>
+
+  <script>
+    // Draw visual text on test canvas
+    const canvas = document.getElementById('testCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f0f4f8';
+    ctx.fillRect(0, 0, 300, 150);
+    ctx.fillStyle = '#1a73e8';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Canvas Embedded Text', 20, 40);
+    ctx.fillStyle = '#d93025';
+    ctx.fillText('secret_api_key@domain.com', 20, 80);
+
+    document.getElementById('runPerceptionBtn').addEventListener('click', () => {
+      window.postMessage({ type: 'TRIGGER_LOCAL_PERCEPTION' }, '*');
+    });
+
+    window.addEventListener('message', (event) => {
+      if (event.data?.type === 'LOCAL_PERCEPTION_RESPONSE') {
+        document.getElementById('outputJson').textContent = JSON.stringify(event.data.detections, null, 2);
+      }
+    });
+  </script>
+</body>
+</html>

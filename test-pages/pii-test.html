@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Local PII Candidate Detection Ground Truth Test Page (M4 Validation)</title>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 40px;
+      background-color: #ffffff;
+      color: #111111;
+      line-height: 1.6;
+    }
+    .section {
+      border: 2px solid #333;
+      padding: 20px;
+      width: 500px;
+      margin-bottom: 24px;
+      border-radius: 6px;
+    }
+    .safe { background-color: #f0fdf4; border-color: #16a34a; }
+    .sensitive { background-color: #fef2f2; border-color: #dc2626; }
+    h2 { margin-top: 0; }
+    .label { font-weight: bold; width: 100px; display: inline-block; }
+  </style>
+</head>
+<body>
+
+  <h1>LOCAL PII CANDIDATE DETECTION TEST PAGE</h1>
+
+  <div class="section safe">
+    <h2 style="color: #15803d;">SAFE ELEMENTS (NON-PII)</h2>
+    <p><span class="label">Order ID:</span> 9876543210</p>
+    <p><span class="label">Year:</span> 2026</p>
+    <p><span class="label">Price:</span> ₹500</p>
+    <p><span class="label">Version:</span> 1.2.3</p>
+    <p><span class="label">Room:</span> 101</p>
+    <p><span class="label">Product ID:</span> 123456</p>
+    <p>Welcome to the Local Perception Agent</p>
+  </div>
+
+  <div class="section sensitive">
+    <h2 style="color: #b91c1c;">SENSITIVE ELEMENTS (PII CANDIDATES)</h2>
+    <p><span class="label">Email:</span> test@example.com</p>
+    <p><span class="label">Phone 1:</span> +91 9876543210</p>
+    <p><span class="label">Phone 2 (WA):</span> +91 733 961 3670</p>
+    <p><span class="label">Phone 3 (WA):</span> +91 99444 90004</p>
+    <p><span class="label">Phone 4 (WA):</span> +91 75399 89671</p>
+    <p><span class="label">Name:</span> John Doe</p>
+    <p><span class="label">Card:</span> 4111 1111 1111 1111</p>
+    <p><span class="label">Password:</span> ••••••••••••</p>
+  </div>
+
+</body>
+</html>

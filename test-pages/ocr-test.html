@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Local OCR Ground Truth Test Page (M3 Validation)</title>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 40px;
+      background-color: #ffffff;
+      color: #111111;
+      line-height: 1.6;
+    }
+    .test-card {
+      border: 2px solid #222;
+      padding: 24px;
+      width: 460px;
+      background-color: #fafafa;
+      border-radius: 6px;
+      margin-bottom: 24px;
+    }
+    h1 { color: #1a73e8; margin-top: 0; }
+    .label { font-weight: bold; width: 80px; display: inline-block; }
+    button {
+      background-color: #1a73e8;
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .canvas-container {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>LOCAL OCR TEST</h1>
+
+  <div class="test-card">
+    <p><span class="label">Name:</span> John Doe</p>
+    <p><span class="label">Email:</span> test@example.com</p>
+    <p><span class="label">Phone:</span> +91 9876543210</p>
+  </div>
+
+  <p>Welcome to the Local Perception Agent.</p>
+  <p>This is an OCR test.</p>
+
+  <button>[ SUBMIT ]</button>
+
+  <div class="canvas-container">
+    <h3>Image-Embedded Visual Text (Non-DOM Text)</h3>
+    <canvas id="ocrImageCanvas" width="400" height="70" style="border: 2px dashed #d93025;"></canvas>
+  </div>
+
+  <script>
+    // Draw visual text onto canvas element (text does NOT exist in DOM text tree)
+    const canvas = document.getElementById('ocrImageCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, 400, 70);
+    ctx.fillStyle = '#ef4444';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('CONFIDENTIAL DOCUMENT', 20, 44);
+  </script>
+</body>
+</html>

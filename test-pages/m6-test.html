@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>M6 Controlled Visual Sensitive Objects Test Page</title>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 40px;
+      background-color: #f3f4f6;
+      color: #111827;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 850px;
+      margin: 0 auto;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    h2 { color: #1d4ed8; margin-top: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .doc-box {
+      border: 2px dashed #9ca3af;
+      padding: 16px;
+      border-radius: 6px;
+      background: #f9fafb;
+    }
+    .passport-box {
+      border-color: #2563eb;
+      background: #eff6ff;
+    }
+    .id-box {
+      border-color: #059669;
+      background: #ecfdf5;
+    }
+    .credit-box {
+      border-color: #7c3aed;
+      background: #f5f3ff;
+    }
+    .normal-ui-card {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      padding: 12px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>M6 LOCAL VISUAL SENSITIVE OBJECTS TEST PAGE</h1>
+
+    <div class="card">
+      <h2>SENSITIVE VISUAL OBJECT TARGETS</h2>
+
+      <div class="grid">
+        <div class="doc-box passport-box">
+          <h3>📘 PASSPORT</h3>
+          <p><strong>REPUBLIC OF DEMO</strong></p>
+          <p>Type: P | Code: RDO</p>
+          <p>Passport No: <strong>A98765432</strong></p>
+          <p>Surname: DOE | Given Name: JOHN</p>
+          <p>MRZ: <code>P<RDODOE<<JOHN<<<<<<<<<<<<<<<<<<<<<<<<<</code></p>
+        </div>
+
+        <div class="doc-box id-box">
+          <h3>🪪 GOVERNMENT ID CARD</h3>
+          <p><strong>NATIONAL IDENTITY CARD</strong></p>
+          <p>ID No: <strong>1234-5678-9012</strong></p>
+          <p>Name: SARAN KUMAR</p>
+          <p>DOB: 15/08/1995</p>
+        </div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <div class="doc-box credit-box">
+          <h3>💳 PAYMENT CARD</h3>
+          <p><strong>GLOBAL BANK VISA</strong></p>
+          <p>Card Number: <strong>4111 1111 1111 1111</strong></p>
+          <p>VALID THRU: 12/28 | CVV: ***</p>
+          <p>Cardholder: JOHN DOE</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>NON-SENSITIVE UI ELEMENTS (FALSE POSITIVE PROTECTION TEST)</h2>
+      <div class="grid">
+        <div class="normal-ui-card">
+          <h4>Product Specification Card</h4>
+          <p>Item: Aluminum Laptop Stand</p>
+          <p>Price: $29.99 | Rating: 4.8 / 5.0</p>
+        </div>
+        <div class="normal-ui-card">
+          <h4>Advertisement Banner Card</h4>
+          <p>Special Offer: 20% off on all accessories!</p>
+          <p>Code: SUMMER2026</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

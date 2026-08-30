@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>M5 End-to-End Unified Perception Test Page</title>
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 40px;
+      background-color: #ffffff;
+      color: #111111;
+      line-height: 1.6;
+    }
+    .card {
+      border: 2px solid #333;
+      padding: 20px;
+      width: 550px;
+      margin-bottom: 24px;
+      border-radius: 8px;
+      background-color: #fafafa;
+    }
+    h2 { margin-top: 0; color: #2563eb; }
+    .face-box {
+      width: 150px;
+      height: 150px;
+      background-color: #e5e7eb;
+      border: 2px dashed #4b5563;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      margin-bottom: 16px;
+    }
+    canvas {
+      border: 1px solid #111;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>M5 UNIFIED PERCEPTION END-TO-END TEST PAGE</h1>
+
+  <div class="card">
+    <h2>PERCEPTION TEST FRAME</h2>
+
+    <div class="face-box">
+      [ Visual Face ]
+    </div>
+
+    <p><strong>Welcome to the Local Perception Agent</strong></p>
+    <p>Email Contact: <strong>test@example.com</strong></p>
+    <p>Phone Contact: <strong>+91 9876543210</strong></p>
+
+    <h3>Visual Canvas Non-DOM Text:</h3>
+    <canvas id="textCanvas" width="400" height="60"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('textCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(0, 0, 400, 60);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('CONFIDENTIAL DOCUMENT', 20, 38);
+  </script>
+</body>
+</html>
