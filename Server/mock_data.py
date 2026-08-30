@@ -4,7 +4,7 @@ mock_data.py — Sample screen_state payloads and test actions for reasoning & v
 SIH26171: On-device Visual Perception for Light-weight Browser Agents
 Shared mock datasets for:
   - Person A: LLM reasoning test scenarios (login, complex page, task complete)
-  - Person B: Validation, hallucination fallback, PII detection, and injection tests
+  - Person B: Validation, hallucination fallback, Luhn PII detection, token scan & loop guards
 
 Data contract reference:
   - screen_state.elements[]: { id, type, bbox, text, dom_selector }
@@ -18,8 +18,6 @@ Data contract reference:
 
 # ---------------------------------------------------------------------------
 # Scenario 1: Simple Login Form
-# A basic login page with username, password (redacted), and submit button.
-# Expected LLM behavior: type into username or click submit depending on goal.
 # ---------------------------------------------------------------------------
 LOGIN_FORM = {
     "session_id": "test-login-001",
@@ -55,9 +53,6 @@ LOGIN_FORM = {
 
 # ---------------------------------------------------------------------------
 # Scenario 2: Complex Page with Mixed Elements
-# A product listing page with navigation, search, cards, a dropdown, and a
-# redacted personal-info field. Tests the LLM's ability to pick the right
-# element among distractors.
 # ---------------------------------------------------------------------------
 COMPLEX_PAGE = {
     "session_id": "test-complex-002",
@@ -114,8 +109,6 @@ COMPLEX_PAGE = {
 
 # ---------------------------------------------------------------------------
 # Scenario 3: Task Complete — Success Page
-# A confirmation page after a successful action. The LLM should recognize
-# the goal is met and return action_type "done".
 # ---------------------------------------------------------------------------
 TASK_COMPLETE = {
     "session_id": "test-done-003",
@@ -160,7 +153,7 @@ ALL_SCENARIOS = [
 
 
 # ===========================================================================
-# PERSON B: Validation, Safety & Sanity Test Cases
+# PERSON B: Validation, Safety, Luhn Check & Sanity Test Cases
 # ===========================================================================
 
 # Standard element list for action validation tests
@@ -171,7 +164,6 @@ SAMPLE_SCREEN_ELEMENTS = [
 ]
 
 # 1. Valid Action: Click element '1' (which exists in SAMPLE_SCREEN_ELEMENTS)
-# Expected result: Passes validation cleanly, unchanged.
 VALID_ACTION_PAYLOAD = {
     "action_type": "click",
     "target_element_id": "1",
@@ -180,7 +172,6 @@ VALID_ACTION_PAYLOAD = {
 }
 
 # 2. Hallucinated Element ID: Target element '99' does not exist in elements list
-# Expected result: Caught by Person B validation -> returns safe fallback {"action_type": "wait", ...}
 HALLUCINATED_ACTION_PAYLOAD = {
     "action_type": "click",
     "target_element_id": "99",
@@ -189,7 +180,6 @@ HALLUCINATED_ACTION_PAYLOAD = {
 }
 
 # 3. Invalid Action Type: 'hover' is not an allowed action type
-# Expected result: Caught by Person B validation -> returns safe fallback {"action_type": "wait", ...}
 INVALID_ACTION_TYPE_PAYLOAD = {
     "action_type": "hover",
     "target_element_id": "1",
@@ -197,9 +187,15 @@ INVALID_ACTION_TYPE_PAYLOAD = {
     "reasoning": "Hovering over element 1.",
 }
 
-# 4. Secondary PII Leak Detection Test Case
-# Screen state containing unredacted email and Indian phone number
-# Expected result: scan_for_pii_leakage() flags both elements with patterns matched.
+# 4. Incompatible Action: Typing into a button (non-input element)
+TYPE_INTO_BUTTON_PAYLOAD = {
+    "action_type": "type",
+    "target_element_id": "1",
+    "value": "hello_world",
+    "reasoning": "Attempting to type into submit button.",
+}
+
+# 5. Secondary PII Leak Detection Test Case (Email + Phone)
 PII_LEAK_SCREEN_STATE = {
     "elements": [
         {
@@ -226,9 +222,45 @@ PII_LEAK_SCREEN_STATE = {
     ]
 }
 
-# 5. Prompt-Injection Heuristic Test Case
-# An adversarial action reasoning that attempts to hijack system directives
-# Expected result: check_for_injection_signs() flags suspicious pattern.
+# 6. Luhn Valid Card vs Random 16-Digit Tracking Number Test Cases
+LUHN_VALID_CARD_SCREEN_STATE = {
+    "elements": [
+        {
+            "id": "1",
+            "type": "span",
+            "bbox": [10, 10, 200, 30],
+            "text": "Payment Card: 4532 0150 0000 0007",  # Passes Luhn (Valid Visa test card)
+            "dom_selector": ".card-details",
+        }
+    ]
+}
+
+NON_CARD_16_DIGIT_SCREEN_STATE = {
+    "elements": [
+        {
+            "id": "1",
+            "type": "span",
+            "bbox": [10, 10, 200, 30],
+            "text": "Order Tracking ID: 1234 5678 9101 1121",  # Fails Luhn (must NOT flag as payment card)
+            "dom_selector": ".order-track",
+        }
+    ]
+}
+
+# 7. Secret Auth Token / API Key Screen State
+AUTH_TOKEN_SCREEN_STATE = {
+    "elements": [
+        {
+            "id": "1",
+            "type": "span",
+            "bbox": [10, 10, 300, 30],
+            "text": "API Key: sk-proj-12345678901234567890abcdef",
+            "dom_selector": ".secret-key",
+        }
+    ]
+}
+
+# 8. Prompt-Injection Heuristic Test Case
 INJECTION_ACTION_PAYLOAD = {
     "action_type": "type",
     "target_element_id": "2",
