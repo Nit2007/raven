@@ -1,7 +1,7 @@
 /**
  * Content script running inside web pages.
- * Handles DOM element extraction for analysis and strict real browser action execution.
- * M9.2 — Real Browser Action Dispatch Engine.
+ * Handles DOM element extraction for analysis, PING handshakes, and strict real browser action execution.
+ * M9.3 — Real Browser Action Dispatch & Handshake Engine.
  */
 
 (() => {
@@ -13,10 +13,10 @@
     };
   }
 
-  // Extract visible interactive & structured DOM elements from the live page
-  function extractLiveDomElements() {
+  // Extract raw DOM HTMLElement nodes list in document order
+  function extractRawDomNodeList(): HTMLElement[] {
     const rawElements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], h1, h2, h3, p, span, form, div'));
-    const results: any[] = [];
+    const nodes: HTMLElement[] = [];
     const maxScan = Math.min(rawElements.length, 500);
 
     for (let i = 0; i < maxScan; i++) {
@@ -30,6 +30,15 @@
       const style = window.getComputedStyle(el);
       if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') < 0.05) continue;
 
+      nodes.push(el);
+    }
+    return nodes;
+  }
+
+  // Extract visible interactive & structured DOM elements for observation JSON payload
+  function extractLiveDomElements() {
+    const nodes = extractRawDomNodeList();
+    return nodes.map((el, idx) => {
       const tag = el.tagName.toLowerCase();
       const type = (el as HTMLInputElement).type || null;
       const name = (el as HTMLInputElement).name || null;
@@ -52,11 +61,13 @@
 
       const interactive = ['a', 'button', 'input', 'select', 'textarea'].includes(tag) || el.getAttribute('role') !== null || el.hasAttribute('onclick');
 
-      results.push({
+      const rect = el.getBoundingClientRect();
+
+      return {
         tag,
         type,
         name,
-        id,
+        id: id || `el_${idx}`,
         placeholder,
         labelText,
         visibleText: visibleText ? visibleText.substring(0, 150) : null,
@@ -68,23 +79,32 @@
           height: Math.round(rect.height)
         },
         interactive
-      });
-    }
-
-    return results;
+      };
+    });
   }
 
-  // Find target element by ID, selector, or attribute (Codeforces & generic site support)
+  // Find target element by ID, selector, synthetic index (el_X), or attribute
   function findTargetElement(selectorOrId: string | null): HTMLElement | null {
     if (!selectorOrId) return null;
 
     const clean = selectorOrId.trim();
 
-    // 1. Direct ID match
+    // 1. Synthetic Index match (e.g. "el_3" or "3")
+    const elIndexMatch = clean.match(/^el_(\d+)$/i) || clean.match(/^(\d+)$/);
+    if (elIndexMatch) {
+      const targetIdx = parseInt(elIndexMatch[1], 10);
+      const liveNodes = extractRawDomNodeList();
+      if (targetIdx >= 0 && targetIdx < liveNodes.length) {
+        console.log(`[RAVEN Content Script] Matched synthetic index "${clean}" to live DOM node #${targetIdx}:`, liveNodes[targetIdx]);
+        return liveNodes[targetIdx];
+      }
+    }
+
+    // 2. Direct ID match
     let el = document.getElementById(clean);
     if (el) return el;
 
-    // 2. Query Selector match
+    // 3. Query Selector match
     try {
       el = document.querySelector(clean);
       if (el) return el;
@@ -92,7 +112,7 @@
       // Ignore invalid CSS selector syntax
     }
 
-    // 3. Match by name, data-id, or value attribute
+    // 4. Match by name, data-id, or value attribute
     try {
       el = document.querySelector(`[name="${clean}"]`) ||
            document.querySelector(`[data-id="${clean}"]`) ||
@@ -101,33 +121,32 @@
       if (el) return el;
     } catch (_) {}
 
-    // 4. Match by exact or partial button/input text or value (Case-insensitive)
+    // 5. Match by exact or partial button/input text or value (Case-insensitive)
     const lowerClean = clean.toLowerCase();
-    const candidates = Array.from(document.querySelectorAll('button, a, input, [role="button"], [role="link"], select'));
+    const candidates = extractRawDomNodeList();
 
     for (const cand of candidates) {
-      const htmlEl = cand as HTMLElement;
-      const id = (htmlEl.id || '').toLowerCase();
-      const name = ((htmlEl as HTMLInputElement).name || '').toLowerCase();
-      const text = (htmlEl.textContent || '').trim().toLowerCase();
-      const val = ((htmlEl as HTMLInputElement).value || '').trim().toLowerCase();
-      const placeholder = ((htmlEl as HTMLInputElement).placeholder || '').trim().toLowerCase();
+      const id = (cand.id || '').toLowerCase();
+      const name = ((cand as HTMLInputElement).name || '').toLowerCase();
+      const text = (cand.textContent || '').trim().toLowerCase();
+      const val = ((cand as HTMLInputElement).value || '').trim().toLowerCase();
+      const placeholder = ((cand as HTMLInputElement).placeholder || '').trim().toLowerCase();
 
       if (id === lowerClean || name === lowerClean) {
-        return htmlEl;
+        return cand;
       }
       if (text && (text === lowerClean || text.includes(lowerClean))) {
-        return htmlEl;
+        return cand;
       }
       if (val && (val === lowerClean || val.includes(lowerClean))) {
-        return htmlEl;
+        return cand;
       }
       if (placeholder && placeholder.includes(lowerClean)) {
-        return htmlEl;
+        return cand;
       }
     }
 
-    // 5. Fallback for login buttons (e.g., Codeforces "Enter" / "Login" submit buttons)
+    // 6. Fallback for login buttons (e.g., Codeforces "Enter" / "Login" submit buttons)
     if (lowerClean.includes('login') || lowerClean.includes('submit') || lowerClean.includes('enter') || lowerClean.includes('sign in')) {
       const submitBtn = document.querySelector('input[type="submit"], button[type="submit"], input.submit, button.submit') as HTMLElement;
       if (submitBtn) return submitBtn;
@@ -309,9 +328,16 @@
 
   // Global listener for runtime messages from Popup & Background worker
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('[RAVEN Content Script] Received message type:', message?.type);
+
+    if (message.type === 'PING') {
+      sendResponse({ success: true, type: 'RAVEN_CONTENT_READY' });
+      return true;
+    }
+
     if (message.type === 'EXTRACT_DOM') {
       try {
-        console.log('[RAVEN Content Script] Received EXTRACT_DOM request');
+        console.log('[RAVEN Content Script] Processing EXTRACT_DOM request');
         const elements = extractLiveDomElements();
         sendResponse({ success: true, elements });
       } catch (err) {
@@ -323,7 +349,7 @@
 
     if (message.type === 'EXECUTE_ACTION') {
       try {
-        console.log('[RAVEN Content Script] Received EXECUTE_ACTION request:', message.command);
+        console.log('[RAVEN Content Script] Processing EXECUTE_ACTION request:', message.command);
         const result = executeValidatedAction(message.command);
         sendResponse(result);
       } catch (err) {
@@ -340,7 +366,9 @@
       }
       return true;
     }
+
+    return true;
   });
 
-  console.log('[RAVEN Content Script] Content script loaded & listening for EXECUTE_ACTION / EXTRACT_DOM');
+  console.log('[RAVEN Content Script] Content script initialized & listening for PING / EXTRACT_DOM / EXECUTE_ACTION');
 })();

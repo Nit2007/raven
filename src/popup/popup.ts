@@ -285,16 +285,60 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  // Query DOM elements from active tab with dynamic script injection fallback
-  const queryLiveDomFromActiveTab = (): Promise<ElementInfo[]> => {
+  // Perform lightweight PING handshake to verify content script connection
+  const ensureContentScriptConnected = (tabId: number): Promise<boolean> => {
     return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, { type: 'PING' }, (res) => {
+        const err = chrome.runtime.lastError;
+        if (!err && res && res.type === 'RAVEN_CONTENT_READY') {
+          console.log(`[RAVEN Popup] Content script handshake: OK on tab ${tabId}`);
+          resolve(true);
+          return;
+        }
+
+        console.warn(`[RAVEN Popup] Content script handshake PING failed on tab ${tabId} (${err?.message || 'No response'}). Injecting dist/src/content/content.js...`);
+
+        if (chrome.scripting) {
+          chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['dist/src/content/content.js']
+          }, () => {
+            const injectErr = chrome.runtime.lastError;
+            if (injectErr) {
+              console.error(`[RAVEN Popup] Dynamic script injection failed on tab ${tabId}:`, injectErr.message);
+              resolve(false);
+              return;
+            }
+
+            // Retry PING after injection
+            chrome.tabs.sendMessage(tabId, { type: 'PING' }, (retryRes) => {
+              const retryErr = chrome.runtime.lastError;
+              if (!retryErr && retryRes && retryRes.type === 'RAVEN_CONTENT_READY') {
+                console.log(`[RAVEN Popup] Content script handshake after injection retry: OK on tab ${tabId}`);
+                resolve(true);
+              } else {
+                console.error(`[RAVEN Popup] Content script handshake PING failed after injection on tab ${tabId}:`, retryErr?.message);
+                resolve(false);
+              }
+            });
+          });
+        } else {
+          resolve(false);
+        }
+      });
+    });
+  };
+
+  // Query DOM elements from active tab with PING handshake & dynamic script injection
+  const queryLiveDomFromActiveTab = (): Promise<ElementInfo[]> => {
+    return new Promise(async (resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
         console.warn('[RAVEN Popup] chrome.tabs API unavailable — returning fallback DOM elements');
         resolve(getFallbackDomElements());
         return;
       }
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         if (!tabs || tabs.length === 0 || !tabs[0].id) {
           console.warn('[RAVEN Popup] INVALID_TAB: No active browser tab found');
           resolve(getFallbackDomElements());
@@ -312,37 +356,22 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        const connected = await ensureContentScriptConnected(tabId);
+        if (!connected) {
+          console.warn(`[RAVEN Popup] CONTENT_SCRIPT_NOT_READY: Content script handshake failed on tab ${tabId}`);
+          resolve(getFallbackDomElements());
+          return;
+        }
+
         console.log(`[RAVEN Popup] Sending EXTRACT_DOM to tab: ${tabId} (${url})`);
 
         chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_DOM' }, (response) => {
           const lastErr = chrome.runtime.lastError;
           if (lastErr || !response || !response.success || !Array.isArray(response.elements) || response.elements.length === 0) {
-            console.warn(`[RAVEN Popup] NO_RECEIVING_END: Message failed on tab ${tabId}. Attempting dynamic content script injection...`, lastErr?.message);
-            
-            if (chrome.scripting) {
-              chrome.scripting.executeScript({
-                target: { tabId },
-                files: ['dist/src/content/content.js']
-              }, () => {
-                const injectErr = chrome.runtime.lastError;
-                if (injectErr) {
-                  console.error(`[RAVEN Popup] CONTENT_SCRIPT_NOT_CONNECTED: Dynamic injection failed for tab ${tabId}:`, injectErr.message);
-                  resolve(getFallbackDomElements());
-                } else {
-                  console.log(`[RAVEN Popup] Dynamic content script injected successfully on tab ${tabId}. Retrying EXTRACT_DOM...`);
-                  chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_DOM' }, (retryRes) => {
-                    if (retryRes && retryRes.success && Array.isArray(retryRes.elements) && retryRes.elements.length > 0) {
-                      resolve(retryRes.elements);
-                    } else {
-                      resolve(getFallbackDomElements());
-                    }
-                  });
-                }
-              });
-            } else {
-              resolve(getFallbackDomElements());
-            }
+            console.warn(`[RAVEN Popup] EXTRACT_DOM failed on tab ${tabId}:`, lastErr?.message);
+            resolve(getFallbackDomElements());
           } else {
+            console.log(`[RAVEN Popup] EXTRACT_DOM succeeded: ${response.elements.length} elements extracted`);
             resolve(response.elements);
           }
         });
@@ -380,9 +409,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   };
 
-  // Dispatch action to content script — Strict real browser dispatch with dynamic injection fallback
+  // Dispatch action to content script — Strict real browser dispatch with PING handshake
   const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<ActionReceipt> => {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
         resolve({
           success: false,
@@ -396,7 +425,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         if (!tabs || tabs.length === 0 || !tabs[0].id) {
           resolve({
             success: false,
@@ -427,60 +456,35 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        const connected = await ensureContentScriptConnected(tabId);
+        if (!connected) {
+          resolve({
+            success: false,
+            action: command.action,
+            target_element_id: command.targetSelector,
+            execution: 'REAL_BROWSER',
+            dispatched: false,
+            verified: false,
+            error: `CONTENT_SCRIPT_NOT_READY: Could not connect content script listener on tab ${tabId}`
+          });
+          return;
+        }
+
         console.log(`[RAVEN Popup] Dispatching EXECUTE_ACTION to tab ${tabId} | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
 
         chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_ACTION', command }, (response: ActionReceipt) => {
           const lastErr = chrome.runtime.lastError;
           if (lastErr || !response) {
-            console.warn(`[RAVEN Popup] NO_RECEIVING_END on tab ${tabId}: ${lastErr?.message}. Attempting dynamic content script injection...`);
-            
-            if (chrome.scripting) {
-              chrome.scripting.executeScript({
-                target: { tabId },
-                files: ['dist/src/content/content.js']
-              }, () => {
-                const injectErr = chrome.runtime.lastError;
-                if (injectErr) {
-                  resolve({
-                    success: false,
-                    action: command.action,
-                    target_element_id: command.targetSelector,
-                    execution: 'REAL_BROWSER',
-                    dispatched: false,
-                    verified: false,
-                    error: `CONTENT_SCRIPT_NOT_CONNECTED: Dynamic injection failed (${injectErr.message})`
-                  });
-                } else {
-                  console.log(`[RAVEN Popup] Dynamic content script injected. Retrying EXECUTE_ACTION...`);
-                  chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_ACTION', command }, (retryRes: ActionReceipt) => {
-                    if (!retryRes) {
-                      resolve({
-                        success: false,
-                        action: command.action,
-                        target_element_id: command.targetSelector,
-                        execution: 'REAL_BROWSER',
-                        dispatched: false,
-                        verified: false,
-                        error: 'ACTION_HANDLER_FAILED: No response after script injection'
-                      });
-                    } else {
-                      console.log(`[RAVEN Popup] Action receipt received after injection retry:`, retryRes);
-                      resolve(retryRes);
-                    }
-                  });
-                }
-              });
-            } else {
-              resolve({
-                success: false,
-                action: command.action,
-                target_element_id: command.targetSelector,
-                execution: 'REAL_BROWSER',
-                dispatched: false,
-                verified: false,
-                error: `CONTENT_SCRIPT_NOT_CONNECTED: ${lastErr?.message || 'No receiving end'}`
-              });
-            }
+            console.error(`[RAVEN Popup] EXECUTE_ACTION failed on tab ${tabId}:`, lastErr?.message);
+            resolve({
+              success: false,
+              action: command.action,
+              target_element_id: command.targetSelector,
+              execution: 'REAL_BROWSER',
+              dispatched: false,
+              verified: false,
+              error: `ACTION_HANDLER_FAILED: ${lastErr?.message || 'No response from webpage content script'}`
+            });
           } else {
             console.log(`[RAVEN Popup] Action receipt received:`, response);
             resolve(response);
