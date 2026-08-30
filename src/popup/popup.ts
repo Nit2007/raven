@@ -411,7 +411,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Dispatch action to content script — Strict real browser dispatch with PING handshake
   const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<ActionReceipt> => {
-    console.log('[RAVEN Popup] dispatchActionToActiveTab ENTER', {
+    console.log('[RAVEN TRACE 9] dispatchActionToActiveTab entered', {
       action: command?.action,
       target: command?.targetSelector
     });
@@ -475,7 +475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        console.log(`[RAVEN Popup] Dispatching EXECUTE_ACTION to tab ${tabId} | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
+        console.log(`[RAVEN TRACE 10] Sending EXECUTE_ACTION to tab ${tabId} | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
 
         chrome.tabs.sendMessage(tabId, { type: 'EXECUTE_ACTION', command }, (response: ActionReceipt) => {
           const lastErr = chrome.runtime.lastError;
@@ -491,7 +491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               error: `ACTION_HANDLER_FAILED: ${lastErr?.message || 'No response from webpage content script'}`
             });
           } else {
-            console.log(`[RAVEN Popup] Action receipt received:`, response);
+            console.log(`[RAVEN TRACE 15] Browser execution receipt received:`, response);
             resolve(response);
           }
         });
@@ -513,6 +513,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     executionResultCard.style.display = 'none';
 
     const goal = userGoalInput.value.trim() || 'Click the Submit button';
+    console.log('[RAVEN TRACE 1] Goal submitted', { goal });
     runIntegratedBtn.disabled = true;
 
     controller.initTask(goal);

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>RAVEN M9.1 — Real Action Test Page</title>
+  <title>RAVEN M9.4 — Real Action Test Page</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; background: #0f0f17; color: #fff; }
     .card { background: #1a1b26; padding: 24px; border-radius: 12px; border: 1px solid #2f334d; max-width: 500px; }
@@ -19,7 +19,7 @@
     
     <button id="login-test">Login</button>
     
-    <div id="status" class="status-box">Not logged in</div>
+    <div id="status" class="status-box" data-clicked="NO">Login button clicked: NO</div>
   </div>
 
   <script>
@@ -27,7 +27,8 @@
     const statusDiv = document.getElementById('status');
 
     btn.addEventListener('click', () => {
-      statusDiv.textContent = 'Login button clicked successfully';
+      statusDiv.setAttribute('data-clicked', 'YES');
+      statusDiv.textContent = 'Login button clicked: YES (Login button clicked successfully)';
       statusDiv.className = 'status-box status-success';
     });
   </script>

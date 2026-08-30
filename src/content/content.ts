@@ -177,7 +177,7 @@
     }
 
     const targetEl = findTargetElement(targetSelector);
-    console.log('[RAVEN Content Script] TARGET LOOKUP RESULT', { found: Boolean(targetEl) });
+    console.log('[RAVEN TRACE 12] Target found', { found: Boolean(targetEl) });
 
     if (actionType === 'CLICK') {
       if (!targetEl) {
@@ -204,7 +204,7 @@
       targetEl.style.outline = '3px solid #a6e3a1';
       setTimeout(() => { targetEl.style.outline = prevOutline; }, 1500);
 
-      console.log('[RAVEN Content Script] EXECUTING REAL CLICK');
+      console.log('[RAVEN TRACE 13] Performing real click');
 
       // Dispatch real mouse events
       const mouseEvents = ['pointerdown', 'mousedown', 'mouseup', 'click'];
@@ -216,7 +216,7 @@
         targetEl.click();
       }
 
-      console.log('[RAVEN Content Script] REAL CLICK COMPLETE');
+      console.log('[RAVEN TRACE 14] Click completed');
 
       const label = targetEl.textContent?.trim() || (targetEl as HTMLInputElement).value || targetSelector || 'element';
       console.log(`[RAVEN Content Script] Real click dispatched cleanly on element "${label}"`);
@@ -357,7 +357,7 @@
 
     if (message.type === 'EXECUTE_ACTION') {
       try {
-        console.log('[RAVEN Content Script] EXECUTE_ACTION RECEIVED', {
+        console.log('[RAVEN TRACE 11] EXECUTE_ACTION received', {
           action: message.command?.action,
           target: message.command?.targetSelector
         });

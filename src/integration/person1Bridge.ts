@@ -177,7 +177,17 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
 
         const elementId = el.id || el.name || (`el_${idx}`);
         const textVal = [el.visibleText, el.value, el.labelText, el.placeholder].filter(Boolean).join(' ').trim();
-        const selector = el.id ? `#${el.id}` : (el.name ? `[name="${el.name}"]` : (el.tag || 'div'));
+        
+        let selector = `el_${idx}`;
+        if (el.id) {
+          selector = `#${el.id}`;
+        } else if (el.name) {
+          selector = `[name="${el.name}"]`;
+        } else if (el.value) {
+          selector = `[value="${el.value}"]`;
+        } else if (el.tag) {
+          selector = `${el.tag}[data-idx="${idx}"]`;
+        }
 
         return {
           id: String(elementId),
@@ -198,10 +208,11 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
         redactionSummary: { count, categories }
       };
     },
-    sendToServer: (payload: any) => {
+
+    sendToServer: async (payload: any) => {
       const check = rawSanitizer.outboundCheck(payload);
       if (!check.safe) {
-        return Promise.resolve({
+        return {
           status: 403,
           ok: false,
           body: {
@@ -210,18 +221,69 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
             action: { action_type: 'none', reasoning: 'Transmission blocked by privacy gate' },
             task_status: 'blocked'
           }
-        });
+        };
       }
-      return Promise.resolve({
-        status: 200,
-        ok: true,
-        body: {
-          session_id: payload.session_id || 'ss-test',
-          action: { action_type: 'none', target_element_id: null, value: null, reasoning: 'Mock success' },
-          task_status: 'in_progress'
-        }
+
+      // Unit test mock mode (MOCK_MODE=true in Node.js test runner)
+      if (typeof (globalThis as any).MOCK_MODE !== 'undefined' && (globalThis as any).MOCK_MODE) {
+        console.log('[SafeScreen] Mock server send (MOCK_MODE=true)');
+        return {
+          status: 200,
+          ok: true,
+          body: {
+            session_id: payload.session_id || 'ss-test',
+            action: { action_type: 'none', target_element_id: null, value: null, reasoning: 'Test mode success' },
+            task_status: 'in_progress'
+          }
+        };
+      }
+
+      // REAL PRODUCTION BROWSER EXECUTION PATH — NO HARDCODED MOCK SUCCESS
+      const endpoint = (globalThis as any).SERVER_URL || 'http://localhost:8000/agent/act';
+      console.log('[RAVEN TRACE 4] Sending real /agent/act request', {
+        endpoint,
+        goal: payload.goal,
+        elementCount: payload?.screen_state?.elements?.length
       });
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const status = response.status;
+        const ok = response.ok;
+        console.log('[RAVEN Server] RESPONSE', { status, ok });
+
+        const body = await response.json();
+        console.log('[RAVEN TRACE 5] Server returned action', {
+          action: body?.action?.action_type || body?.action,
+          target: body?.action?.target_element_id || body?.targetSelector,
+          taskStatus: body?.task_status
+        });
+
+        return {
+          status,
+          ok,
+          body
+        };
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error('[RAVEN Server] FETCH FAILED:', errMsg);
+        return {
+          status: 503,
+          ok: false,
+          body: {
+            error: `SERVER_UNAVAILABLE: Could not connect to RAVEN server at ${endpoint} (${errMsg})`,
+            action: { action_type: 'none', reasoning: 'Server connection failed' },
+            task_status: 'error'
+          }
+        };
+      }
     },
+
     receiveServerCommand: (response: any, sentElements?: any[]) => {
       const body = response.body || response;
       const errors: string[] = [];
@@ -268,7 +330,7 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
           action: rawActionType,
           targetSelector: targetId,
           value: actionObj.value || null,
-          confidence: 1.0,
+          confidence: 1,
           reasoning: actionObj.reasoning || '',
           task_status: body.task_status || 'in_progress'
         }

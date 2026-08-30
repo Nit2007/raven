@@ -114,7 +114,7 @@ export class ActionExecutor {
     command: ValidatedCommand,
     dispatcherFn: (cmd: ValidatedCommand) => Promise<ActionReceipt>
   ): Promise<ActionReceipt> {
-    console.log('[RAVEN ActionExecutor] executeValidatedAction ENTER', {
+    console.log('[RAVEN TRACE 7] executeValidatedAction entered', {
       action: command?.action,
       target: command?.targetSelector
     });
@@ -133,7 +133,7 @@ export class ActionExecutor {
       return noneReceipt;
     }
 
-    console.log('[RAVEN ActionExecutor] CALLING dispatchActionFn', {
+    console.log('[RAVEN TRACE 8] Calling dispatchActionFn', {
       action: command.action,
       target: command.targetSelector
     });

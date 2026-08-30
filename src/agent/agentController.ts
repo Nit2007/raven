@@ -1,32 +1,25 @@
-/**
- * AgentController — Central Autonomous Agent Orchestrator.
- *
- * Manages the multi-step Observe -> Protect -> Send to Server -> Validate -> Act -> Re-Observe loop.
- * Guarantees privacy enforcement on EVERY iteration.
- */
-
-import { ActionExecutor, ValidatedCommand, ActionReceipt } from './actionExecutor.js';
+import { ElementInfo, PerceptionAdapter } from '../integration/perceptionAdapter.js';
 import { Person1Bridge } from '../integration/person1Bridge.js';
-import { PerceptionAdapter, ElementInfo } from '../integration/perceptionAdapter.js';
+import { ActionExecutor, ValidatedCommand, ActionReceipt } from './actionExecutor.js';
 
-export type AgentStatus =
-  | 'IDLE'
-  | 'ANALYZING'
-  | 'PROTECTING'
-  | 'SERVER_THINKING'
-  | 'ACTION_APPROVED'
-  | 'EXECUTING'
-  | 'OBSERVING'
-  | 'COMPLETED'
-  | 'TRANSMISSION_BLOCKED'
-  | 'ACTION_REJECTED'
-  | 'SERVER_UNAVAILABLE'
-  | 'TARGET_NOT_FOUND'
-  | 'MAX_STEPS_REACHED'
-  | 'TASK_FAILED'
+export type AgentStatus = 
+  | 'IDLE' 
+  | 'ANALYZING' 
+  | 'PROTECTING' 
+  | 'SERVER_THINKING' 
+  | 'ACTION_APPROVED' 
+  | 'EXECUTING' 
+  | 'OBSERVING' 
+  | 'COMPLETED' 
+  | 'TRANSMISSION_BLOCKED' 
+  | 'SERVER_UNAVAILABLE' 
+  | 'ACTION_REJECTED' 
+  | 'TARGET_NOT_FOUND' 
+  | 'MAX_STEPS_REACHED' 
+  | 'TASK_FAILED' 
   | 'ERROR';
 
-export interface StepRecord {
+export interface AgentExecutionRecord {
   step: number;
   goal: string;
   status: AgentStatus;
@@ -36,14 +29,16 @@ export interface StepRecord {
   targetSelector?: string | null;
   message?: string;
   timestamp: string;
-  execution?: string;
+  execution?: 'REAL_BROWSER';
   dispatched?: boolean;
   verified?: boolean;
 }
 
-export interface AgentControllerConfig {
-  maxIterations?: number;
-  stabilizeDelayMs?: number;
+export interface AgentIterationResult {
+  done: boolean;
+  success: boolean;
+  status: AgentStatus;
+  message: string;
 }
 
 export class AgentController {
@@ -51,14 +46,15 @@ export class AgentController {
   public currentIteration: number = 1;
   public maxIterations: number = 10;
   public status: AgentStatus = 'IDLE';
-  public executionHistory: StepRecord[] = [];
+  public executionHistory: AgentExecutionRecord[] = [];
+  
   public privacyChecksCount: number = 0;
   public protectedItemsCount: number = 0;
   public serverDecisionsCount: number = 0;
 
   private stabilizeDelayMs: number = 600;
 
-  constructor(config?: AgentControllerConfig) {
+  constructor(config?: { maxIterations?: number; stabilizeDelayMs?: number }) {
     if (config?.maxIterations) this.maxIterations = config.maxIterations;
     if (config?.stabilizeDelayMs) this.stabilizeDelayMs = config.stabilizeDelayMs;
   }
@@ -66,7 +62,7 @@ export class AgentController {
   /**
    * Reset controller state for a new user task goal.
    */
-  public initTask(goal: string) {
+  public initTask(goal: string): void {
     this.taskGoal = goal;
     this.currentIteration = 1;
     this.status = 'IDLE';
@@ -87,10 +83,9 @@ export class AgentController {
   public async executeIteration(
     queryDomFn: () => Promise<ElementInfo[]>,
     runPerceptionFn: () => Promise<any>,
-    dispatchActionFn: (cmd: ValidatedCommand) => Promise<ActionReceipt>,
+    dispatchActionFn: (command: ValidatedCommand) => Promise<ActionReceipt>,
     onStateChange?: (status: AgentStatus, message?: string) => void
-  ): Promise<{ done: boolean; success: boolean; status: AgentStatus; message?: string }> {
-
+  ): Promise<AgentIterationResult> {
     if (this.currentIteration > this.maxIterations) {
       this.status = 'MAX_STEPS_REACHED';
       const msg = 'Task stopped: maximum agent steps reached.';
@@ -106,6 +101,7 @@ export class AgentController {
 
     const rawDomElements = await queryDomFn();
     const perceptionResult = await runPerceptionFn();
+    console.log('[RAVEN TRACE 2] Observation complete', { domCount: rawDomElements.length });
 
     // STEP 3 & 4: PROTECT — Classification & Fusion
     this.status = 'PROTECTING';
@@ -144,6 +140,8 @@ export class AgentController {
       return { done: true, success: false, status: this.status, message: errMsg };
     }
 
+    console.log('[RAVEN TRACE 3] Outbound privacy gate passed');
+
     // STEP 9: SERVER REASONING (POST /agent/act)
     this.status = 'SERVER_THINKING';
     onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Outbound gate passed. Reasoning via server AI...`);
@@ -181,12 +179,15 @@ export class AgentController {
     }
 
     const command = valResult.command;
+    console.log('[RAVEN TRACE 6] Action validation passed', command);
+
     this.status = 'ACTION_APPROVED';
     onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Server approved action: ${command.action}`);
 
     // Check if task is finished according to server response contract
     const isServerCompleted = (serverResponse.body?.task_status === 'completed') || (command.action === 'DONE');
     if (isServerCompleted) {
+      console.log('[RAVEN TRACE 17] Completion verified');
       this.status = 'COMPLETED';
       const msg = command.reasoning || `Task finished successfully in step ${currentStep}.`;
       onStateChange?.(this.status, msg);
@@ -249,16 +250,17 @@ export class AgentController {
     this.status = 'OBSERVING';
     onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Action executed (${execReceipt.message}). Waiting for page to stabilize...`);
 
+    console.log('[RAVEN TRACE 16] Re-observing page');
     await new Promise(r => setTimeout(r, this.stabilizeDelayMs));
 
     this.currentIteration++;
-    return { done: false, success: true, status: 'OBSERVING', message: execReceipt.message };
+    return { done: false, success: true, status: 'OBSERVING', message: execReceipt.message || 'Action executed' };
   }
 
   /**
    * Record step details in history.
    */
-  private recordStep(rec: StepRecord) {
+  public recordStep(rec: AgentExecutionRecord): void {
     this.executionHistory.push(rec);
   }
 }
