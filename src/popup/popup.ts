@@ -379,7 +379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   };
 
-  // Run perception pipeline for observation step
+  // Run perception pipeline for observation step with full M1-M6 timing & telemetry UI updates
   const runPerceptionStep = async (): Promise<any> => {
     const tStart = performance.now();
     const capResult = await captureManager.captureVisibleViewport();
@@ -396,6 +396,41 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const perceptionRes = await pipeline.runLocalPerception(currentInput, previewImg);
       currentDetections = perceptionRes.detections;
+
+      // Populate UI Developer Diagnostic timing metrics
+      const timing = perceptionRes.timing || {};
+      tFaceEl.textContent = `${timing.faceMs || 0} ms`;
+      tOcrInitEl.textContent = `${timing.ocrInitMs || 0} ms (cached)`;
+      tOcrInferenceEl.textContent = `${timing.ocrInferenceMs || 0} ms`;
+      tVisionEl.textContent = `${timing.visionMs || 0} ms`;
+      tNormalizerEl.textContent = `${timing.normalizationMs || 0} ms`;
+      tPiiEl.textContent = `${timing.piiMs || 0} ms`;
+      tFusionEl.textContent = `${timing.fusionMs || 0} ms`;
+      tTotalEl.textContent = `${timing.totalMs || 0} ms`;
+
+      // Update Subsystem Status Labels
+      const sub = perceptionRes.subsystems || {};
+      subFaceEl.textContent = `BlazeFace WASM (${sub.face?.status || 'COMPLETED'})`;
+      subOcrEl.textContent = `Tesseract.js WASM (${sub.ocr?.status || 'COMPLETED'})`;
+      subPiiEl.textContent = `Regex & Context Engine (${sub.pii?.status || 'COMPLETED'})`;
+      subVisionEl.textContent = `Document Feature Classifier (${sub.vision?.status || 'COMPLETED'})`;
+      subFusionEl.textContent = `Spatial Fusion Engine (${perceptionRes.counts?.total || 0} Unified Elements)`;
+
+      // Update Protection Summary Breakdown
+      const counts = perceptionRes.counts || { faces: 0, piiCandidates: 0, visualObjects: 0 };
+      catFacesVal.textContent = String(counts.faces || 0);
+      catPiiVal.textContent = String(counts.piiCandidates || 0);
+      catDocsVal.textContent = String(counts.visualObjects || 0);
+
+      catFacesRow.style.display = (counts.faces || 0) > 0 ? 'flex' : 'none';
+      catPiiRow.style.display = (counts.piiCandidates || 0) > 0 ? 'flex' : 'none';
+      catDocsRow.style.display = (counts.visualObjects || 0) > 0 ? 'flex' : 'none';
+      catEmptyRow.style.display = ((counts.faces || 0) + (counts.piiCandidates || 0) + (counts.visualObjects || 0)) === 0 ? 'block' : 'none';
+
+      // Update Diagnostics Views
+      detectionsView.textContent = JSON.stringify(perceptionRes.detections, null, 2);
+      renderBboxes(currentDetections);
+
       return perceptionRes;
     }
 
@@ -403,9 +438,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       schemaVersion: '1.0.0', status: 'SUCCESS', generatedAt: Date.now(),
       screenshot: { width: 1280, height: 720, coordinateSpace: 'SCREENSHOT' },
       detections: [], counts: { faces: 0, ocrRegions: 0, piiCandidates: 0, visualObjects: 0, total: 0 },
-      timing: { captureMs: 10, faceMs: 10, ocrInitMs: 10, ocrInferenceMs: 10, normalizationMs: 1, piiMs: 1, fusionMs: 1, totalMs: 43 },
+      timing: { captureMs: 10, faceMs: 10, ocrInitMs: 0, ocrInferenceMs: 10, normalizationMs: 1, piiMs: 1, fusionMs: 1, totalMs: 43 },
       locality: { isLocal: true, externalAiUsed: false, networkUploadPerformed: false },
-      subsystems: { face: { status: 'SUCCESS' }, ocr: { status: 'SUCCESS' }, pii: { status: 'SUCCESS' } }
+      subsystems: { face: { status: 'COMPLETED' }, ocr: { status: 'COMPLETED' }, pii: { status: 'COMPLETED' }, vision: { status: 'COMPLETED' } }
     };
   };
 
