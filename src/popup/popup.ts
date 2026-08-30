@@ -411,6 +411,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Dispatch action to content script — Strict real browser dispatch with PING handshake
   const dispatchActionToActiveTab = (command: ValidatedCommand): Promise<ActionReceipt> => {
+    console.log('[RAVEN Popup] dispatchActionToActiveTab ENTER', {
+      action: command?.action,
+      target: command?.targetSelector
+    });
+
     return new Promise(async (resolve) => {
       if (typeof chrome === 'undefined' || !chrome.tabs) {
         resolve({

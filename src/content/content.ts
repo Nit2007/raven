@@ -88,6 +88,7 @@
     if (!selectorOrId) return null;
 
     const clean = selectorOrId.trim();
+    console.log('[RAVEN Content Script] LOOKING FOR TARGET', clean);
 
     // 1. Synthetic Index match (e.g. "el_3" or "3")
     const elIndexMatch = clean.match(/^el_(\d+)$/i) || clean.match(/^(\d+)$/);
@@ -176,6 +177,7 @@
     }
 
     const targetEl = findTargetElement(targetSelector);
+    console.log('[RAVEN Content Script] TARGET LOOKUP RESULT', { found: Boolean(targetEl) });
 
     if (actionType === 'CLICK') {
       if (!targetEl) {
@@ -202,6 +204,8 @@
       targetEl.style.outline = '3px solid #a6e3a1';
       setTimeout(() => { targetEl.style.outline = prevOutline; }, 1500);
 
+      console.log('[RAVEN Content Script] EXECUTING REAL CLICK');
+
       // Dispatch real mouse events
       const mouseEvents = ['pointerdown', 'mousedown', 'mouseup', 'click'];
       mouseEvents.forEach(evtName => {
@@ -211,6 +215,8 @@
       if (typeof targetEl.click === 'function') {
         targetEl.click();
       }
+
+      console.log('[RAVEN Content Script] REAL CLICK COMPLETE');
 
       const label = targetEl.textContent?.trim() || (targetEl as HTMLInputElement).value || targetSelector || 'element';
       console.log(`[RAVEN Content Script] Real click dispatched cleanly on element "${label}"`);
@@ -328,7 +334,7 @@
 
   // Global listener for runtime messages from Popup & Background worker
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[RAVEN Content Script] MESSAGE RECEIVED | Type:', message?.type);
+    console.log('[RAVEN Content Script] MESSAGE RECEIVED', message?.type);
 
     if (message.type === 'PING') {
       console.log('[RAVEN Content Script] Responding to PING -> RAVEN_CONTENT_READY');
@@ -351,12 +357,15 @@
 
     if (message.type === 'EXECUTE_ACTION') {
       try {
-        console.log('[RAVEN Content Script] EXECUTE_ACTION RECEIVED | Action:', message.command?.action, '| Target:', message.command?.targetSelector);
+        console.log('[RAVEN Content Script] EXECUTE_ACTION RECEIVED', {
+          action: message.command?.action,
+          target: message.command?.targetSelector
+        });
         const result = executeValidatedAction(message.command);
-        console.log('[RAVEN Content Script] Returning ActionReceipt to popup:', result);
+        console.log('[RAVEN Content Script] SENDING ACTION RESPONSE', result);
         sendResponse(result);
       } catch (err) {
-        console.error('[RAVEN Content Script] Error during EXECUTE_ACTION:', err);
+        console.error('[RAVEN Content Script] ACTION HANDLER ERROR:', err);
         sendResponse({
           success: false,
           action: message.command?.action || 'UNKNOWN',

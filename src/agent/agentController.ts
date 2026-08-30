@@ -213,7 +213,14 @@ export class AgentController {
     this.status = 'EXECUTING';
     onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Executing ${command.action} on page...`);
 
+    console.log('[RAVEN AgentController] ABOUT TO EXECUTE ACTION', {
+      action: command.action,
+      target: command.targetSelector
+    });
+
     const execReceipt: ActionReceipt = await ActionExecutor.executeValidatedAction(command, dispatchActionFn);
+
+    console.log('[RAVEN AgentController] EXECUTION RECEIPT', execReceipt);
 
     if (!execReceipt.success || !execReceipt.dispatched) {
       this.status = 'TASK_FAILED';

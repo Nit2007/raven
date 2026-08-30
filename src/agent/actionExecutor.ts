@@ -114,8 +114,13 @@ export class ActionExecutor {
     command: ValidatedCommand,
     dispatcherFn: (cmd: ValidatedCommand) => Promise<ActionReceipt>
   ): Promise<ActionReceipt> {
+    console.log('[RAVEN ActionExecutor] executeValidatedAction ENTER', {
+      action: command?.action,
+      target: command?.targetSelector
+    });
+
     if (command.action === 'NONE' || command.action === 'DONE') {
-      return {
+      const noneReceipt: ActionReceipt = {
         success: true,
         action: command.action,
         target_element_id: command.targetSelector,
@@ -124,32 +129,36 @@ export class ActionExecutor {
         verified: true,
         message: command.action === 'DONE' ? 'Task completed by server decision' : 'No browser action required'
       };
+      console.log('[RAVEN ActionExecutor] FINAL EXECUTION RECEIPT (NONE/DONE)', noneReceipt);
+      return noneReceipt;
     }
 
-    console.log(`[RAVEN ActionExecutor] Dispatched EXECUTE_ACTION command | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
+    console.log('[RAVEN ActionExecutor] CALLING dispatchActionFn', {
+      action: command.action,
+      target: command.targetSelector
+    });
 
     try {
       const res = await dispatcherFn(command);
-      console.log(`[RAVEN ActionExecutor] EXECUTE_ACTION response received:`, {
-        success: res.success,
-        dispatched: res.dispatched,
-        message: res.message,
-        error: res.error
-      });
+      console.log('[RAVEN ActionExecutor] dispatchActionFn RETURNED', res);
 
-      return {
-        success: Boolean(res.success && res.dispatched),
+      const isSuccess = Boolean(res.success && res.dispatched);
+      const receipt: ActionReceipt = {
+        success: isSuccess,
         action: command.action,
         target_element_id: command.targetSelector,
         execution: 'REAL_BROWSER',
         dispatched: Boolean(res.dispatched),
         verified: Boolean(res.verified),
         message: res.message || `Real ${command.action} action executed on webpage`,
-        error: res.error
+        error: res.error || (isSuccess ? undefined : 'Execution dispatch returned failure receipt')
       };
+
+      console.log('[RAVEN ActionExecutor] FINAL EXECUTION RECEIPT', receipt);
+      return receipt;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[RAVEN ActionExecutor] EXECUTE_ACTION FAILED:`, errMsg);
+      console.error('[RAVEN ActionExecutor] executeValidatedAction ERROR', err);
       return {
         success: false,
         action: command.action,
