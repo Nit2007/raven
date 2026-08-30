@@ -490,6 +490,32 @@
       color: var(--error-color);
       display: none;
     }
+
+    /* Screenshot preview & canvas overlay coordinate alignment (M9.7) */
+    .visual-wrapper {
+      position: relative;
+      width: 100%;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #0d0d15;
+      border: 1px solid var(--border-color);
+      margin-top: 8px;
+    }
+
+    #capturePreview {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    #bboxOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>

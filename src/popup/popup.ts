@@ -556,21 +556,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Render Bounding Boxes on Canvas Overlay
+  // Render Bounding Boxes on Canvas Overlay (Canonical SCREENSHOT_PIXELS -> DISPLAY transform)
   function renderBboxes(detections: DetectionResult[]) {
     if (!currentInput) return;
 
-    bboxOverlay.width = previewImg.naturalWidth || previewImg.clientWidth;
-    bboxOverlay.height = previewImg.naturalHeight || previewImg.clientHeight;
+    const imgW = previewImg.naturalWidth || previewImg.clientWidth || 1;
+    const imgH = previewImg.naturalHeight || previewImg.clientHeight || 1;
+
+    bboxOverlay.width = imgW;
+    bboxOverlay.height = imgH;
 
     const ctx = bboxOverlay.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, bboxOverlay.width, bboxOverlay.height);
 
+    console.log('[RAVEN COORDINATES]', {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      imageWidth: imgW,
+      imageHeight: imgH,
+      displayWidth: previewImg.clientWidth,
+      displayHeight: previewImg.clientHeight,
+      detectionCount: detections.length
+    });
+
     const visibleDetections = detections.filter(d => showOcrOverlayCheck.checked || d.type !== 'OCR_TEXT');
 
-    visibleDetections.forEach((det, idx) => {
+    visibleDetections.forEach((det) => {
       const { x, y, width, height } = det.bbox;
 
       let color = '#f9e2af';
