@@ -163,16 +163,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderBboxes(currentDetections);
   });
 
-  // State Management for Popup UI
+  // State Management for Popup UI (3-Phase Transaction Model)
   const updateUIState = (state: AgentStatus, message?: string) => {
     statusCard.className = 'status-card';
 
-    if (state === 'ANALYZING' || state === 'PROTECTING') {
+    if (state === 'PHASE_1_ANALYSIS' || state === 'ANALYZING' || state === 'PROTECTING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = `● Step ${controller.currentIteration}/${controller.maxIterations}`;
+      headerStatusDot.textContent = '● Phase 1/3';
       statusIcon.textContent = '⚡';
-      statusHeading.textContent = `STEP ${controller.currentIteration} / ${controller.maxIterations}`;
+      statusHeading.textContent = 'PHASE 1 / 3 — LOCAL ANALYSIS';
       statusDesc.textContent = message || 'Analyzing viewport pixels & DOM structures locally...';
 
       serverStatusBadge.className = 'status-dot dot-protected';
@@ -180,55 +180,44 @@ document.addEventListener('DOMContentLoaded', async () => {
       serverNotice.textContent = 'RAVEN server is ready';
       serverNotice.style.color = 'var(--success-color)';
 
-      stepAnalysis.innerHTML = `<span class="check-mark">⏳</span> Step ${controller.currentIteration} analysis running...`;
-    } else if (state === 'SERVER_THINKING') {
+      stepAnalysis.innerHTML = '<span class="check-mark">⏳</span> Phase 1 — Local analysis running...';
+    } else if (state === 'PHASE_2_EXECUTION' || state === 'SERVER_THINKING' || state === 'ACTION_APPROVED' || state === 'EXECUTING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = `● Thinking`;
-      statusIcon.textContent = '🧠';
-      statusHeading.textContent = 'THINKING';
-      statusDesc.textContent = message || 'Reasoning about the task with server AI...';
+      headerStatusDot.textContent = '● Phase 2/3';
+      statusIcon.textContent = '⚙️';
+      statusHeading.textContent = 'PHASE 2 / 3 — SERVER & EXECUTION';
+      statusDesc.textContent = message || 'Reasoning via server AI & dispatching action...';
 
       serverStatusBadge.className = 'status-dot dot-processing';
       serverStatusBadge.textContent = '● Processing';
-      serverNotice.textContent = `Reasoning about step ${controller.currentIteration}...`;
+      serverNotice.textContent = 'Server AI reasoning & action dispatch';
       serverNotice.style.color = 'var(--warning-color)';
-    } else if (state === 'ACTION_APPROVED') {
-      statusCard.classList.add('status-card-safe');
-      headerStatusDot.className = 'status-dot dot-protected';
-      headerStatusDot.textContent = `● Action Approved`;
-      statusIcon.textContent = '✓';
-      statusHeading.textContent = 'ACTION APPROVED';
-      statusDesc.textContent = message || 'Server action validated cleanly.';
 
-      serverStatusBadge.className = 'status-dot dot-protected';
-      serverStatusBadge.textContent = '✓ Action approved';
-      serverNotice.textContent = 'Server action validated cleanly';
-      serverNotice.style.color = 'var(--success-color)';
-
-      stepGate.innerHTML = `<span class="check-mark">✓</span> Outbound privacy check passed`;
-      stepReady.innerHTML = `<span class="check-mark">✓</span> Safe action approved`;
-    } else if (state === 'EXECUTING') {
+      stepAnalysis.innerHTML = '<span class="check-mark">✓</span> Phase 1 — Local analysis complete';
+      stepProtected.innerHTML = '<span class="check-mark">⏳</span> Phase 2 — Server & execution in progress...';
+    } else if (state === 'PHASE_3_VERIFICATION' || state === 'OBSERVING') {
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = `● Executing`;
-      statusIcon.textContent = '⚙️';
-      statusHeading.textContent = 'EXECUTING';
-      statusDesc.textContent = message || 'Executing real action on browser page...';
-    } else if (state === 'OBSERVING') {
-      statusCard.classList.add('status-card-processing');
-      headerStatusDot.className = 'status-dot dot-processing';
-      headerStatusDot.textContent = `● Re-Observing`;
+      headerStatusDot.textContent = '● Phase 3/3';
       statusIcon.textContent = '🔍';
-      statusHeading.textContent = 'RE-OBSERVING PAGE';
-      statusDesc.textContent = message || 'Action executed. Re-observing new page state...';
+      statusHeading.textContent = 'PHASE 3 / 3 — LOCAL VERIFICATION';
+      statusDesc.textContent = message || 'Verifying real action effect on page state...';
+
+      stepProtected.innerHTML = '<span class="check-mark">✓</span> Phase 2 — Execution dispatched';
+      stepGate.innerHTML = '<span class="check-mark">⏳</span> Phase 3 — Local verification running...';
     } else if (state === 'COMPLETED') {
       statusCard.classList.add('status-card-safe');
       headerStatusDot.className = 'status-dot dot-protected';
-      headerStatusDot.textContent = '● Completed';
+      headerStatusDot.textContent = '● Phase 3/3';
       statusIcon.textContent = '🎉';
       statusHeading.textContent = 'TASK COMPLETED';
-      statusDesc.textContent = message || 'Task verified and completed.';
+      statusDesc.textContent = message || 'Task action verified and completed successfully.';
+
+      stepAnalysis.innerHTML = '<span class="check-mark">✓</span> Phase 1 — Local analysis complete';
+      stepProtected.innerHTML = '<span class="check-mark">✓</span> Phase 2 — Action executed';
+      stepGate.innerHTML = '<span class="check-mark">✓</span> Phase 3 — Action verified';
+      stepReady.innerHTML = '<span class="check-mark">✓</span> Transaction complete';
     } else if (state === 'TRANSMISSION_BLOCKED') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
@@ -242,8 +231,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       serverNotice.textContent = '🔴 Outbound privacy leak blocked by gate';
       serverNotice.style.color = 'var(--error-color)';
 
-      stepGate.innerHTML = `<span style="color:var(--error-color)">✗</span> Outbound privacy check failed`;
-      stepReady.innerHTML = `<span style="color:var(--error-color)">✗</span> Transmission blocked`;
+      stepGate.innerHTML = '<span style="color:var(--error-color)">✗</span> Outbound privacy check failed';
+      stepReady.innerHTML = '<span style="color:var(--error-color)">✗</span> Transmission blocked';
     } else if (state === 'SERVER_UNAVAILABLE') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
@@ -271,10 +260,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (state === 'MAX_STEPS_REACHED') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';
-      headerStatusDot.textContent = '● Max Steps Reached';
+      headerStatusDot.textContent = '● Limit Reached';
       statusIcon.textContent = '⏹️';
-      statusHeading.textContent = 'MAX STEPS REACHED';
-      statusDesc.textContent = message || 'Task stopped: maximum agent steps reached (10/10).';
+      statusHeading.textContent = 'LIMIT REACHED';
+      statusDesc.textContent = message || 'Task stopped: maximum agent safety iterations reached.';
     } else if (state === 'TASK_FAILED' || state === 'ERROR') {
       statusCard.classList.add('status-card-blocked');
       headerStatusDot.className = 'status-dot dot-blocked';

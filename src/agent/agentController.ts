@@ -6,6 +6,9 @@ export type AgentStatus =
   | 'IDLE' 
   | 'ANALYZING' 
   | 'PROTECTING' 
+  | 'PHASE_1_ANALYSIS'
+  | 'PHASE_2_EXECUTION'
+  | 'PHASE_3_VERIFICATION'
   | 'SERVER_THINKING' 
   | 'ACTION_APPROVED' 
   | 'EXECUTING' 
@@ -73,12 +76,10 @@ export class AgentController {
   }
 
   /**
-   * Executes a single iteration of the autonomous agent loop:
-   * 1. Observe (DOM + Visual Perception)
-   * 2. Protect & Mask (Sensitivity Classifier + Redaction Engine)
-   * 3. Sanitize & Check Outbound Privacy Gate (Authoritative Gate)
-   * 4. Query Server (POST /agent/act)
-   * 5. Validate Action & Execute on Page
+   * Executes a 3-Phase Browser-Agent Transaction:
+   * PHASE 1: Local Perception & Privacy Enforcement (DOM + OCR + Face + Vision + Fusion + Gate)
+   * PHASE 2: Server AI Reasoning + Real Browser Action Dispatch
+   * PHASE 3: Local Action Verification & State Diff
    */
   public async executeIteration(
     queryDomFn: () => Promise<ElementInfo[]>,
@@ -95,22 +96,21 @@ export class AgentController {
 
     const currentStep = this.currentIteration;
 
-    // STEP 1 & 2: OBSERVE — Capture & Perception
-    this.status = 'ANALYZING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Analyzing page state locally...`);
+    // ==========================================
+    // PHASE 1 — LOCAL ANALYSIS & PRIVACY ENFORCEMENT
+    // ==========================================
+    this.status = 'PHASE_1_ANALYSIS';
+    onStateChange?.(this.status, 'Phase 1/3: Analyzing page state & enforcing local privacy...');
 
+    console.log('[RAVEN:P1] DOM extraction starting...');
     const rawDomElements = await queryDomFn();
-    const perceptionResult = await runPerceptionFn();
-    console.log('[RAVEN TRACE 2] Observation complete', { domCount: rawDomElements.length });
+    console.log('[RAVEN:P1] DOM complete', { domCount: rawDomElements.length });
 
-    // STEP 3 & 4: PROTECT — Classification & Fusion
-    this.status = 'PROTECTING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Running privacy sensitivity classification...`);
+    const perceptionResult = await runPerceptionFn();
 
     const classifiedDom = Person1Bridge.SensitivityDetector.classifyElements(rawDomElements);
     const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(classifiedDom, perceptionResult);
 
-    // STEP 5 & 6: REDACT & SANITIZE
     const redactedElements = Person1Bridge.RedactionEngine.redactElements(integratedElements);
     const sanitizedPayload = Person1Bridge.Sanitizer.sanitizeContext(redactedElements);
 
@@ -118,13 +118,12 @@ export class AgentController {
     this.protectedItemsCount += stepRedactedCount;
     this.privacyChecksCount++;
 
-    // STEP 7 & 8: AUTHORITATIVE OUTBOUND PRIVACY GATE (PRE-NETWORK CHECK)
     const gateCheck = Person1Bridge.Sanitizer.outboundCheck(sanitizedPayload);
 
     if (!gateCheck.safe) {
-      // HARD STOP — DO NOT CONTACT SERVER
       this.status = 'TRANSMISSION_BLOCKED';
-      const errMsg = `Outbound privacy leak detected in step ${currentStep}. Transmission blocked by RAVEN gate.`;
+      const errMsg = `Outbound privacy leak detected in iteration ${currentStep}. Transmission blocked by RAVEN gate.`;
+      console.error('[RAVEN:PRIVACY] OUTBOUND_GATE REJECTED', errMsg);
       onStateChange?.(this.status, errMsg);
 
       this.recordStep({
@@ -140,12 +139,15 @@ export class AgentController {
       return { done: true, success: false, status: this.status, message: errMsg };
     }
 
-    console.log('[RAVEN TRACE 3] Outbound privacy gate passed');
+    console.log('[RAVEN:PRIVACY] OUTBOUND_GATE PASSED');
 
-    // STEP 9: SERVER REASONING (POST /agent/act)
-    this.status = 'SERVER_THINKING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Outbound gate passed. Reasoning via server AI...`);
+    // ==========================================
+    // PHASE 2 — SERVER REASONING & REAL ACTION EXECUTION
+    // ==========================================
+    this.status = 'PHASE_2_EXECUTION';
+    onStateChange?.(this.status, 'Phase 2/3: Server AI reasoning & real browser action dispatch...');
 
+    console.log('[RAVEN:SERVER] REQUEST sending sanitized screen state...');
     const wirePayload = Person1Bridge.ServerAdapter.buildOutboundPayload(sanitizedPayload, this.taskGoal);
     const serverResponse = await Person1Bridge.ServerAdapter.sendToServer(wirePayload);
     this.serverDecisionsCount++;
@@ -164,7 +166,6 @@ export class AgentController {
       }
     }
 
-    // STEP 10: ACTION VALIDATION
     const valResult = ActionExecutor.validateAction(
       serverResponse.body || serverResponse,
       wirePayload.screen_state.elements
@@ -179,17 +180,13 @@ export class AgentController {
     }
 
     const command = valResult.command;
-    console.log('[RAVEN TRACE 6] Action validation passed', command);
+    console.log('[RAVEN:SERVER] ACTION approved:', command.action, { target: command.targetSelector });
 
-    this.status = 'ACTION_APPROVED';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Server approved action: ${command.action}`);
-
-    // Check if task is finished according to server response contract
     const isServerCompleted = (serverResponse.body?.task_status === 'completed') || (command.action === 'DONE');
     if (isServerCompleted) {
-      console.log('[RAVEN TRACE 17] Completion verified');
+      console.log('[RAVEN:VERIFY] RESULT Task completion verified by server contract');
       this.status = 'COMPLETED';
-      const msg = command.reasoning || `Task finished successfully in step ${currentStep}.`;
+      const msg = command.reasoning || `Task finished successfully.`;
       onStateChange?.(this.status, msg);
 
       this.recordStep({
@@ -210,18 +207,9 @@ export class AgentController {
       return { done: true, success: true, status: this.status, message: msg };
     }
 
-    // STEP 11: BROWSER EXECUTION
-    this.status = 'EXECUTING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Executing ${command.action} on page...`);
-
-    console.log('[RAVEN AgentController] ABOUT TO EXECUTE ACTION', {
-      action: command.action,
-      target: command.targetSelector
-    });
-
+    console.log('[RAVEN:BROWSER] EXECUTE dispatching action to webpage content script...', command);
     const execReceipt: ActionReceipt = await ActionExecutor.executeValidatedAction(command, dispatchActionFn);
-
-    console.log('[RAVEN AgentController] EXECUTION RECEIPT', execReceipt);
+    console.log('[RAVEN:BROWSER] EXECUTE receipt:', execReceipt);
 
     const isDispatchRequired = command.action !== 'NONE' && command.action !== 'DONE';
     if (!execReceipt.success || (isDispatchRequired && !execReceipt.dispatched)) {
@@ -246,7 +234,13 @@ export class AgentController {
       verified: execReceipt.verified
     });
 
-    // STEP 12: OBSERVING & PAGE STABILIZATION
+    // ==========================================
+    // PHASE 3 — LOCAL VERIFICATION & STATE DIFF
+    // ==========================================
+    this.status = 'PHASE_3_VERIFICATION';
+    onStateChange?.(this.status, `Phase 3/3: Verifying action effect (${command.action}) on page state...`);
+    console.log('[RAVEN:VERIFY] RESULT verifying action receipt:', execReceipt);
+
     const lowerGoal = this.taskGoal.toLowerCase();
     const isDirectScrollGoal = command.action === 'SCROLL' && (
       lowerGoal.includes('scroll down') ||
@@ -255,21 +249,16 @@ export class AgentController {
     );
 
     if (execReceipt.verified && isDirectScrollGoal) {
-      console.log('[RAVEN TRACE 17] Task completed on direct scroll verification');
+      console.log('[RAVEN:VERIFY] RESULT Task completed on direct scroll verification');
       this.status = 'COMPLETED';
       const msg = execReceipt.message || `Action ${command.action} verified and task completed cleanly.`;
       onStateChange?.(this.status, msg);
       return { done: true, success: true, status: this.status, message: msg };
     }
 
-    this.status = 'OBSERVING';
-    onStateChange?.(this.status, `Iteration ${currentStep}/${this.maxIterations}: Action executed (${execReceipt.message}). Waiting for page to stabilize...`);
-
-    console.log('[RAVEN TRACE 16] Re-observing page');
     await new Promise(r => setTimeout(r, this.stabilizeDelayMs));
-
     this.currentIteration++;
-    return { done: false, success: true, status: 'OBSERVING', message: execReceipt.message || 'Action executed' };
+    return { done: false, success: true, status: 'PHASE_3_VERIFICATION', message: execReceipt.message || 'Action executed' };
   }
 
   /**
