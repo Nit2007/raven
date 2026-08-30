@@ -14,6 +14,7 @@
   var btnSend = document.getElementById('btn-send');
   var btnAutoRedact = document.getElementById('btn-auto-redact');
   var btnClearCache = document.getElementById('btn-clear-cache');
+  var btnOpenViewer = document.getElementById('btn-open-viewer');
   var statsBar = document.getElementById('stats-bar');
   var panelRaw = document.getElementById('panel-raw');
   var panelRedacted = document.getElementById('panel-redacted');
@@ -21,6 +22,13 @@
   var serverResponse = document.getElementById('server-response');
 
   var lastResult = null;
+
+  if (btnOpenViewer) {
+    btnOpenViewer.addEventListener('click', function () {
+      chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/viewer.html') });
+    });
+  }
+
 
   function getActiveTab(cb) {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {

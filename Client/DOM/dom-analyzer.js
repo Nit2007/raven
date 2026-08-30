@@ -38,7 +38,7 @@ var DOMAnalyzer = (function () {
   // during the tree walk before any mutations happen.
   function isVisible(el, rect) {
     if (rect.width === 0 || rect.height === 0) return false;
-    
+
     // Check off-screen
     if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) {
       return false;
@@ -81,7 +81,7 @@ var DOMAnalyzer = (function () {
   function getSemanticRole(el) {
     var explicitRole = el.getAttribute('role');
     if (explicitRole) return explicitRole;
-    
+
     var tag = el.tagName.toLowerCase();
     switch (tag) {
       case 'a': return el.hasAttribute('href') ? 'link' : null;
@@ -160,14 +160,14 @@ var DOMAnalyzer = (function () {
       children: [], // For structural output
       _element: el
     };
-    
+
     registry.set(stableRef, info);
     return info;
   }
 
   function walkNode(node, root, depth, state) {
     if (depth > MAX_DEPTH || state.nodeCount >= MAX_NODES) return null;
-    
+
     // Check timeout budget
     if (performance.now() - state.startTime > SCAN_BUDGET_MS) {
       if (!state.warned) {
@@ -184,7 +184,7 @@ var DOMAnalyzer = (function () {
       if (node.tagName === 'IFRAME') {
         var rect = node.getBoundingClientRect();
         if (!isVisible(node, rect)) return null;
-        
+
         try {
           var iframeDoc = node.contentDocument;
           if (iframeDoc && iframeDoc.body) {
@@ -234,7 +234,7 @@ var DOMAnalyzer = (function () {
 
     var root = doc.body || doc.documentElement || doc;
     var tree = walkNode(root, doc, 0, state);
-    
+
     var t1 = performance.now();
     stats.lastScanDuration = t1 - t0;
     stats.totalNodes = state.nodeCount;
@@ -247,12 +247,40 @@ var DOMAnalyzer = (function () {
     };
   }
 
+  // Returns true if a node is (or is inside) one of SafeScreen's own
+  // redaction overlay boxes, so we can tell mutations WE caused apart
+  // from mutations caused by the page itself.
+  function isOwnOverlayNode(n) {
+    if (!n || n.nodeType !== 1) return false; // only element nodes carry the class
+    if (n.classList && n.classList.contains('safescreen-overlay')) return true;
+    if (n.closest) {
+      try { return !!n.closest('.safescreen-overlay'); } catch (_) { return false; }
+    }
+    return false;
+  }
+
   function startObserving(doc, onMutation) {
     stopObserving();
     var target = doc.body || doc.documentElement;
     if (!target) return;
 
     mutationObserver = new MutationObserver(function (mutations) {
+      // Ignore mutations that are just SafeScreen adding/removing its own
+      // overlay boxes (showOverlays/clearOverlays in content-script.js).
+      // Without this, drawing the overlay retriggers the observer, which
+      // reruns the pipeline, which redraws the overlay — an infinite loop.
+      var relevant = mutations.some(function (m) {
+        if (isOwnOverlayNode(m.target)) return false;
+
+        var added   = m.addedNodes   ? Array.prototype.slice.call(m.addedNodes)   : [];
+        var removed = m.removedNodes ? Array.prototype.slice.call(m.removedNodes) : [];
+        var touched = added.concat(removed);
+
+        if (touched.length === 0) return true; // attribute-only mutation on a real node
+        return touched.some(function (n) { return !isOwnOverlayNode(n); });
+      });
+      if (!relevant) return;
+
       if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
       mutationDebounceTimer = setTimeout(function () {
         console.log('[SafeScreen] Incremental scan triggered');

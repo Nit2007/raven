@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeScreen — LLM Prompt Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0f14;
+  --surface: #13161e;
+  --surface2: #1a1e28;
+  --border: #252a38;
+  --accent: #6366f1;
+  --accent2: #22d3ee;
+  --red: #f43f5e;
+  --green: #10b981;
+  --yellow: #f59e0b;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --mono: 'JetBrains Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* --- Header --- */
+header {
+  background: linear-gradient(135deg, #1a1e2e 0%, #13161e 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 32px;
+  display: flex; align-items: center; gap: 16px;
+}
+.logo { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+header h1 { font-size: 18px; font-weight: 700; }
+header span { font-size: 12px; color: var(--muted); margin-top: 2px; display: block; }
+.status-pill { margin-left: auto; background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3); color: var(--green); font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 20px; display: flex; align-items: center; gap: 6px; }
+.status-pill::before { content: ''; width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* --- Layout --- */
+.main { display: grid; grid-template-columns: 340px 1fr; height: calc(100vh - 69px); }
+
+/* --- Sidebar --- */
+.sidebar { border-right: 1px solid var(--border); overflow-y: auto; background: var(--surface); }
+.sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.sidebar-section h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 12px; }
+
+/* Stats */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.stat-card .val { font-size: 24px; font-weight: 700; }
+.stat-card .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.val-red { color: var(--red); }
+.val-green { color: var(--green); }
+.val-yellow { color: var(--yellow); }
+.val-accent { color: var(--accent); }
+
+/* Element list */
+.el-list { display: flex; flex-direction: column; gap: 4px; }
+.el-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: border-color .15s, background .15s; }
+.el-item:hover { border-color: var(--accent); background: #1e2236; }
+.el-item.active { border-color: var(--accent); background: rgba(99,102,241,.1); }
+.el-item-top { display: flex; align-items: center; gap: 8px; }
+.el-tag { font-family: var(--mono); font-size: 11px; background: rgba(99,102,241,.15); color: var(--accent); padding: 2px 6px; border-radius: 4px; }
+.el-name { font-size: 12px; color: var(--text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px; }
+.badge-high { background: rgba(244,63,94,.15); color: var(--red); border: 1px solid rgba(244,63,94,.3); }
+.badge-low  { background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+.badge-safe { background: rgba(16,185,129,.15); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+.el-token { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+/* --- Main panel --- */
+.panel { display: flex; flex-direction: column; overflow: hidden; }
+.panel-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); }
+.tab { padding: 12px 20px; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.panel-body { flex: 1; overflow-y: auto; padding: 24px; }
+
+/* --- Prompt builder --- */
+.prompt-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.prompt-header { padding: 12px 20px; background: var(--surface2); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.prompt-header .tag { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+.prompt-body { padding: 20px; font-family: var(--mono); font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
+.token-redacted { background: rgba(244,63,94,.15); color: var(--red); border: 1px solid rgba(244,63,94,.25); border-radius: 4px; padding: 1px 5px; font-weight: 600; }
+.token-empty    { background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.25); border-radius: 4px; padding: 1px 5px; font-weight: 600; }
+.token-safe     { color: #94a3b8; }
+.section-header { color: var(--accent2); font-weight: 600; }
+.comment        { color: var(--muted); font-style: italic; }
+
+/* --- Detail pane --- */
+.detail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.detail-card h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 14px; }
+.kv-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: 13px; }
+.kv-key { color: var(--muted); font-size: 12px; }
+.kv-val { font-family: var(--mono); color: var(--text); word-break: break-all; }
+.kv-val.redacted { color: var(--red); }
+
+/* --- JSON view --- */
+.json-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.json-toolbar { padding: 10px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.json-toolbar span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.copy-btn { background: var(--accent); color: white; border: none; padding: 5px 14px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+.copy-btn:hover { opacity: .85; }
+pre { padding: 20px; font-family: var(--mono); font-size: 12px; line-height: 1.7; overflow-x: auto; }
+
+/* Token colors in JSON */
+.j-key    { color: #7dd3fc; }
+.j-str    { color: #86efac; }
+.j-redact { color: var(--red); }
+.j-num    { color: #fbbf24; }
+.j-bool   { color: #c084fc; }
+
+/* --- Controls bar --- */
+.controls { padding: 12px 24px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
+.btn { padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s, transform .1s; }
+.btn:active { transform: scale(.97); }
+.btn-primary { background: linear-gradient(135deg, var(--accent), #818cf8); color: white; }
+.btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn:hover   { opacity: .85; }
+.controls-note { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🛡️</div>
+  <div>
+    <h1>SafeScreen — LLM Prompt Viewer</h1>
+    <span>Redacted DOM context sent to AI agent</span>
+  </div>
+  <div class="status-pill" id="status-pill">Privacy Active</div>
+</header>
+
+<div class="main">
+  <!-- Sidebar: element list -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h3>Scan Summary</h3>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="val val-accent" id="st-total">0</div><div class="lbl">Elements</div></div>
+        <div class="stat-card"><div class="val val-red" id="st-redacted">0</div><div class="lbl">Redacted</div></div>
+        <div class="stat-card"><div class="val val-green" id="st-safe">0</div><div class="lbl">Safe</div></div>
+        <div class="stat-card"><div class="val val-yellow" id="st-low">0</div><div class="lbl">Low Conf.</div></div>
+      </div>
+    </div>
+    <div class="sidebar-section" style="flex:1">
+      <h3>Classified Elements</h3>
+      <div class="el-list" id="el-list"></div>
+    </div>
+  </aside>
+
+  <!-- Main panel -->
+  <div class="panel">
+    <div class="panel-tabs">
+      <div class="tab active" data-tab="prompt">📤 LLM Prompt</div>
+      <div class="tab" data-tab="detail">🔍 Element Detail</div>
+      <div class="tab" data-tab="json">{ } Raw Payload</div>
+    </div>
+
+    <div class="panel-body" id="tab-prompt">
+      <div class="prompt-wrap">
+        <div class="prompt-header">
+          <span class="tag">SYSTEM CONTEXT PAYLOAD</span>
+          <span id="prompt-meta">Generating…</span>
+        </div>
+        <div class="prompt-body" id="prompt-body">Loading…</div>
+      </div>
+    </div>
+
+    <div class="panel-body" id="tab-detail" style="display:none">
+      <div id="detail-body"><p style="color:var(--muted);font-size:14px;">← Click an element in the sidebar to inspect it.</p></div>
+    </div>
+
+    <div class="panel-body" id="tab-json" style="display:none">
+      <div class="json-wrap">
+        <div class="json-toolbar">
+          <span>server_payload.json</span>
+          <button class="copy-btn" onclick="copyJson()">Copy JSON</button>
+        </div>
+        <pre id="json-body">Loading…</pre>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-primary" onclick="loadDemo()">↺ Refresh Demo</button>
+      <button class="btn btn-ghost" onclick="exportPrompt()">⬇ Export Prompt</button>
+      <span class="controls-note" id="scan-time">—</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// MOCK PAYLOAD — Replace with real chrome.runtime message
+// to receive data from content-script.js in the extension.
+// ============================================================
+var MOCK_PAYLOAD = {
+  timestamp: new Date().toISOString(),
+  url: "https://checkout.example.com/order",
+  title: "Checkout — Example Store",
+  scanDurationMs: 7.4,
+  totalNodes: 312,
+  elements: [
+    { tag:"input", type:"email", name:"email", id:"login-email", labelText:"Email Address", value:"{EMAIL filled}", placeholder:"you@example.com", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"EMAIL", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:220,width:320,height:40} },
+    { tag:"input", type:"password", name:"password", id:"login-password", labelText:"Password", value:"{PASSWORD filled}", placeholder:"Enter password", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"PASSWORD", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:276,width:320,height:40} },
+    { tag:"input", type:"text", name:"firstName", id:"first-name", labelText:"First Name", value:"{PERSONAL_DATA filled}", interactive:true, sensitivity:"LOW_CONFIDENCE_PII", ruleToken:"PERSONAL_DATA", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:340,width:152,height:40} },
+    { tag:"input", type:"text", name:"lastName", id:"last-name", labelText:"Last Name", value:"{PERSONAL_DATA filled}", interactive:true, sensitivity:"LOW_CONFIDENCE_PII", ruleToken:"PERSONAL_DATA", policyAction:"REDACT", redacted:true, boundingBox:{x:328,y:340,width:152,height:40} },
+    { tag:"input", type:"tel", name:"phone", id:"phone", labelText:"Phone Number", value:"{PHONE filled}", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"PHONE", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:396,width:320,height:40} },
+    { tag:"input", type:"text", name:"ssn", id:"ssn", labelText:"SSN (identity verification)", value:"{SSN filled}", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"SSN", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:452,width:320,height:40} },
+    { tag:"input", type:"text", name:"cardNumber", id:"card-number", labelText:"Card Number", value:"{CARD filled}", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"CARD", policyAction:"REDACT", redacted:true, boundingBox:{x:160,y:530,width:320,height:40} },
+    { tag:"input", type:"text", name:"cvv", id:"card-cvv", labelText:"CVV", value:"{CVV filled}", interactive:true, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"CVV", policyAction:"REDACT", redacted:true, boundingBox:{x:328,y:590,width:80,height:40} },
+    { tag:"p", name:"", id:"", labelText:"", visibleText:"Your receipt will be sent to [EMAIL]. Our support line is [PHONE].", interactive:false, sensitivity:"HIGH_CONFIDENCE_PII", ruleToken:"TEXT", policyAction:"ABSTRACT", redacted:true, boundingBox:{x:160,y:680,width:480,height:60} },
+    { tag:"button", type:"button", name:"", id:"btn-submit", labelText:"Place Order — $149.99", visibleText:"Place Order — $149.99", interactive:true, sensitivity:"SAFE", ruleToken:null, policyAction:"KEEP", redacted:false, boundingBox:{x:160,y:760,width:320,height:48} },
+    { tag:"p", name:"", id:"", labelText:"", visibleText:"Standard shipping takes 5-7 business days.", interactive:false, sensitivity:"SAFE", ruleToken:null, policyAction:"KEEP", redacted:false, boundingBox:{x:160,y:840,width:480,height:40} }
+  ]
+};
+
+var selectedIdx = null;
+var currentPayload = null;
+
+function loadDemo() {
+  currentPayload = MOCK_PAYLOAD;
+  renderAll();
+}
+
+function renderAll() {
+  var p = currentPayload;
+  var high = p.elements.filter(function(e){ return e.sensitivity === 'HIGH_CONFIDENCE_PII'; }).length;
+  var low  = p.elements.filter(function(e){ return e.sensitivity === 'LOW_CONFIDENCE_PII'; }).length;
+  var safe = p.elements.filter(function(e){ return e.sensitivity === 'SAFE'; }).length;
+
+  document.getElementById('st-total').textContent = p.elements.length;
+  document.getElementById('st-redacted').textContent = high + low;
+  document.getElementById('st-safe').textContent = safe;
+  document.getElementById('st-low').textContent = low;
+  document.getElementById('scan-time').textContent = 'Scan: ' + (p.scanDurationMs||'?') + 'ms · ' + (p.totalNodes||'?') + ' nodes';
+
+  renderSidebar(p.elements);
+  renderPrompt(p);
+  renderJson(p);
+}
+
+function renderSidebar(els) {
+  var html = '';
+  els.forEach(function(el, i) {
+    var badge = el.sensitivity === 'HIGH_CONFIDENCE_PII' ? '<span class="badge badge-high">HIGH PII</span>'
+              : el.sensitivity === 'LOW_CONFIDENCE_PII'  ? '<span class="badge badge-low">LOW PII</span>'
+              : '<span class="badge badge-safe">SAFE</span>';
+    var label = el.labelText || el.visibleText || el.name || el.id || '(unnamed)';
+    if (label.length > 28) label = label.slice(0,28) + '…';
+    var token = el.redacted ? '<div class="el-token">' + (el.value || '') + '</div>' : '';
+    html += '<div class="el-item" data-idx="'+i+'" onclick="selectEl('+i+')">'
+          + '<div class="el-item-top"><span class="el-tag">&lt;'+el.tag+'&gt;</span><span class="el-name">'+esc(label)+'</span>'+badge+'</div>'
+          + token
+          + '</div>';
+  });
+  document.getElementById('el-list').innerHTML = html;
+}
+
+function selectEl(idx) {
+  selectedIdx = idx;
+  document.querySelectorAll('.el-item').forEach(function(e){ e.classList.remove('active'); });
+  document.querySelector('[data-idx="'+idx+'"]').classList.add('active');
+  switchTab('detail');
+  renderDetail(currentPayload.elements[idx]);
+}
+
+function renderDetail(el) {
+  var sensColor = el.sensitivity === 'HIGH_CONFIDENCE_PII' ? 'val-red' : el.sensitivity === 'LOW_CONFIDENCE_PII' ? 'val-yellow' : 'val-green';
+  var html = '<div class="detail-card">'
+    + '<h4>Element Info</h4>'
+    + '<div class="kv-grid">'
+    + kv('Tag', '&lt;'+el.tag+'&gt;')
+    + kv('Type', el.type || '—')
+    + kv('ID', el.id || '—')
+    + kv('Name attr', el.name || '—')
+    + kv('Label text', el.labelText || '—')
+    + kv('Interactive', el.interactive ? 'Yes' : 'No')
+    + '</div></div>'
+
+    + '<div class="detail-card">'
+    + '<h4>Classification</h4>'
+    + '<div class="kv-grid">'
+    + kv('Sensitivity', '<span class="badge '+( el.sensitivity==='HIGH_CONFIDENCE_PII'?'badge-high':el.sensitivity==='LOW_CONFIDENCE_PII'?'badge-low':'badge-safe' )+'">'+el.sensitivity+'</span>')
+    + kv('Rule Token', el.ruleToken ? '<code style="color:var(--accent)">'+el.ruleToken+'</code>' : '—')
+    + kv('Policy Action', el.policyAction)
+    + kv('Redacted', el.redacted ? '<span style="color:var(--red)">Yes</span>' : '<span style="color:var(--green)">No</span>')
+    + '</div></div>'
+
+    + '<div class="detail-card">'
+    + '<h4>Value Sent to LLM</h4>'
+    + '<div style="font-family:var(--mono);font-size:13px;padding:12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);color:'
+    + (el.redacted?'var(--red)':'var(--green)') + '">'
+    + esc(el.value || el.visibleText || '(empty)')
+    + '</div></div>'
+
+    + '<div class="detail-card">'
+    + '<h4>Bounding Box</h4>'
+    + '<div class="kv-grid">'
+    + kv('Position', 'x='+el.boundingBox.x+', y='+el.boundingBox.y)
+    + kv('Size', el.boundingBox.width+'px × '+el.boundingBox.height+'px')
+    + '</div></div>';
+
+  document.getElementById('detail-body').innerHTML = html;
+}
+
+function kv(k,v){ return '<span class="kv-key">'+k+'</span><span class="kv-val">'+v+'</span>'; }
+
+function renderPrompt(p) {
+  var lines = [];
+  lines.push('<span class="comment"># SafeScreen Redacted DOM Context Payload</span>');
+  lines.push('<span class="comment"># Generated: '+p.timestamp+'</span>');
+  lines.push('<span class="comment"># Source URL: '+p.url+'</span>');
+  lines.push('<span class="comment"># All PII has been redacted client-side before this payload was assembled.</span>');
+  lines.push('<span class="comment"># Tokens in {curly braces} indicate redacted fields and their fill state.</span>');
+  lines.push('');
+  lines.push('<span class="section-header">PAGE CONTEXT:</span>');
+  lines.push('  Title: <span class="token-safe">'+esc(p.title)+'</span>');
+  lines.push('  Total interactive elements: <span class="token-safe">'+p.elements.filter(function(e){return e.interactive;}).length+'</span>');
+  lines.push('');
+  lines.push('<span class="section-header">INTERACTIVE ELEMENTS (for agent action planning):</span>');
+
+  p.elements.forEach(function(el, i) {
+    if (!el.interactive && el.tag !== 'p') return;
+    var label = el.labelText || el.visibleText || el.name || el.id || '?';
+    var valDisplay = el.redacted
+      ? '<span class="'+(el.value&&el.value.includes('empty')?'token-empty':'token-redacted')+'">'+esc(el.value||'')+'</span>'
+      : '<span class="token-safe">'+esc(el.value||el.visibleText||'(empty)')+'</span>';
+    lines.push('  ['+(i+1)+'] &lt;'+el.tag+(el.type?' type="'+el.type+'"':'')+'&gt;');
+    lines.push('       label  : <span class="token-safe">'+esc(label)+'</span>');
+    lines.push('       value  : '+valDisplay);
+    lines.push('       ref    : <span class="token-safe">'+(el.id?'#'+el.id : el.name||'(no-ref)')+'</span>');
+    lines.push('       action : <span class="token-safe">'+(el.interactive?'[CLICKABLE / TYPEABLE]':'[READ-ONLY]')+'</span>');
+    lines.push('');
+  });
+
+  lines.push('<span class="section-header">AGENT INSTRUCTION:</span>');
+  lines.push('  Based on the above redacted screen context, you may issue ONE of:');
+  lines.push('    CLICK  {"target":"#element-id"}');
+  lines.push('    TYPE   {"target":"#element-id","text":"..."}');
+  lines.push('    SCROLL {"direction":"down","amount":300}');
+  lines.push('    SELECT {"target":"#element-id","option":"value"}');
+  lines.push('');
+  lines.push('<span class="comment"># ⚠  Do NOT attempt to reconstruct redacted PII values.</span>');
+  lines.push('<span class="comment"># ⚠  Do NOT issue commands not listed above.</span>');
+
+  document.getElementById('prompt-body').innerHTML = lines.join('\n');
+  document.getElementById('prompt-meta').textContent = lines.length + ' lines · ' + p.elements.length + ' elements';
+}
+
+function renderJson(p) {
+  function colorize(str) {
+    return str
+      .replace(/"([^"]+)":/g, '<span class="j-key">"$1"</span>:')
+      .replace(/: "(\{[^"]+\})"/g, ': <span class="j-redact">"$1"</span>')
+      .replace(/: "([^"]+)"/g, ': <span class="j-str">"$1"</span>')
+      .replace(/: (true|false)/g, ': <span class="j-bool">$1</span>')
+      .replace(/: (\d+\.?\d*)/g, ': <span class="j-num">$1</span>');
+  }
+  var raw = JSON.stringify(p, null, 2);
+  document.getElementById('json-body').innerHTML = colorize(esc(raw));
+}
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(function(t) {
+  t.addEventListener('click', function(){ switchTab(t.dataset.tab); });
+});
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.tab===name); });
+  ['prompt','detail','json'].forEach(function(id){
+    document.getElementById('tab-'+id).style.display = (id===name?'':'none');
+  });
+}
+
+function copyJson() {
+  navigator.clipboard.writeText(JSON.stringify(currentPayload, null, 2)).then(function(){
+    var btn = document.querySelector('.copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(function(){ btn.textContent = 'Copy JSON'; }, 1500);
+  });
+}
+
+function exportPrompt() {
+  var txt = document.getElementById('prompt-body').innerText;
+  var a = document.createElement('a');
+  a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(txt);
+  a.download = 'safescreen-prompt-' + Date.now() + '.txt';
+  a.click();
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Boot
+loadDemo();
+</script>
+</body>
+</html>

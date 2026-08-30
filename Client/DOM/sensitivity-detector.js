@@ -1,86 +1,97 @@
 /**
- * Sensitivity Detector — classifies each ElementInfo as SAFE, SENSITIVE_FIELD, or SENSITIVE_TEXT.
- * Pure function: classifyElements(elements: ElementInfo[]) -> ClassifiedElement[]
+ * Sensitivity Detector — Fuses regex/keyword rules with real on-device NER.
  *
- * Detection is data-driven: rules loaded from data/pii-patterns.json at init time.
- * Each result includes category, matched rule ID, confidence, and reason for dashboard explainability.
+ * NER model: dslim/distilbert-base-NER (Transformers.js, quantized int8 ~65MB)
+ * Running in background.js service worker; queried via chrome.runtime.sendMessage.
  *
- * Classification cache: per-domain element signatures stored in chrome.storage.local
- * to skip re-classification of unchanged form structures on repeat visits (7-day TTL).
+ * Confidence tiers:
+ *   HIGH_CONFIDENCE_PII  — regex/pattern match, confidence >= 0.8
+ *   LOW_CONFIDENCE_PII   — NER match or weak heuristic (0.4–0.79)
+ *   SAFE
  */
 
-// eslint-disable-next-line no-unused-vars
 var SensitivityDetector = (function () {
   'use strict';
 
-  var piiData = null;       // loaded once from JSON
-  var compiledRules = null;  // { fieldRules: [], textRules: [] } with compiled RegExp objects
-  var cacheStats = { hits: 0, misses: 0 };
-  var CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  var piiData       = null;
+  var compiledRules = null;
 
-  // --- Initialization: load pii-patterns.json ---
+  // --- NER bridge: delegates to background.js service worker ---
+  var NER = {
+    classify: function(text) {
+      if (!text || typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        return Promise.resolve([]);
+      }
+      return new Promise(function(resolve) {
+        try {
+          chrome.runtime.sendMessage({ action: 'ner_classify', text: text }, function(entities) {
+            if (chrome.runtime.lastError) {
+              console.warn('[SensitivityDetector] NER unavailable:', chrome.runtime.lastError.message);
+              resolve([]);
+            } else {
+              resolve(entities || []);
+            }
+          });
+        } catch(e) {
+          resolve([]);
+        }
+      });
+    },
+    toInternalToken: function(entity_group) {
+      switch (entity_group) {
+        case 'PER':  return '[PERSON_NAME]';
+        case 'LOC':  return '[LOCATION]';
+        case 'ORG':  return '[ORGANIZATION]';
+        case 'MISC': return '[PERSONAL_DATA]';
+        default:     return '[PERSONAL_DATA]';
+      }
+    }
+  };
 
+  // --- Rule loading ---
   function loadPiiPatterns(callback) {
     if (piiData) { callback(); return; }
-
-    // In content-script context, use chrome.runtime.getURL for extension-bundled resources.
-    // Fall back to fetch from relative path for standalone/test usage.
-    var url;
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-      url = chrome.runtime.getURL('data/pii-patterns.json');
-    } else {
-      url = 'data/pii-patterns.json';
-    }
+    var url = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+      ? chrome.runtime.getURL('data/pii-patterns.json')
+      : 'data/pii-patterns.json';
 
     fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
         piiData = data;
         compiledRules = compileRules(data);
-        console.log('[SafeScreen] PII patterns loaded:', Object.keys(data.categories).length, 'categories');
+        console.log('[SensitivityDetector] Loaded', compiledRules.fieldRules.length,
+          'field rules and', compiledRules.textRules.length, 'text rules');
         callback();
       })
-      .catch(function (err) {
-        console.warn('[SafeScreen] Failed to load pii-patterns.json, falling back to empty ruleset:', err.message);
-        piiData = { categories: {}, confidenceThresholds: { SENSITIVE_FIELD: 0.6, SENSITIVE_TEXT: 0.5 } };
+      .catch(function(err) {
+        console.error('[SensitivityDetector] CRITICAL: Failed to load pii-patterns.json:', err.message || err);
+        console.error('[SensitivityDetector] Protection is DEGRADED — falling back to empty ruleset');
+        piiData = { categories: {} };
         compiledRules = { fieldRules: [], textRules: [] };
         callback();
       });
   }
 
   function compileRules(data) {
-    var fieldRules = [];
-    var textRules = [];
-
-    var categories = data.categories;
-    for (var catKey in categories) {
-      if (!categories.hasOwnProperty(catKey)) continue;
-      var cat = categories[catKey];
+    var fieldRules = [], textRules = [];
+    for (var catKey in data.categories) {
+      var cat   = data.categories[catKey];
       var rules = cat.rules || [];
       for (var i = 0; i < rules.length; i++) {
-        var rule = rules[i];
+        var rule     = rules[i];
         var compiled = {
-          id: rule.id,
-          description: rule.description,
-          category: catKey,
-          categoryLabel: cat.label,
-          confidence: rule.confidence,
-          token: rule.token,
-          scope: rule.scope
+          id: rule.id, description: rule.description, category: catKey,
+          categoryLabel: cat.label, confidence: rule.confidence,
+          token: rule.token, scope: rule.scope
         };
-
         if (rule.scope === 'field') {
-          compiled.keywords = (rule.keywords || []).map(function (k) { return k.toLowerCase(); });
-          compiled.autocompleteHints = (rule.autocompleteHints || []).map(function (h) { return h.toLowerCase(); });
-          compiled.inputTypeMatch = rule.match ? rule.match.inputType || null : null;
+          compiled.keywords          = (rule.keywords || []).map(function(k) { return k.toLowerCase(); });
+          compiled.autocompleteHints = (rule.autocompleteHints || []).map(function(h) { return h.toLowerCase(); });
+          compiled.inputTypeMatch    = rule.match ? rule.match.inputType || null : null;
           fieldRules.push(compiled);
         } else if (rule.scope === 'text' && rule.regex) {
-          try {
-            compiled.regex = new RegExp(rule.regex, rule.regexFlags || 'g');
-          } catch (e) {
-            console.warn('[SafeScreen] Bad regex in rule', rule.id, ':', e.message);
-            continue;
-          }
+          compiled.regex = new RegExp(rule.regex, rule.regexFlags || 'g');
           textRules.push(compiled);
         }
       }
@@ -88,282 +99,157 @@ var SensitivityDetector = (function () {
     return { fieldRules: fieldRules, textRules: textRules };
   }
 
-  // --- Element signature for cache keying ---
+  // --- Synchronous regex/keyword layers ---
 
-  function elementSignature(el) {
-    return [el.tag, el.type, el.name, el.id, el.autocomplete, el.placeholder].join('|');
-  }
-
-  function domainKey() {
-    try { return window.location.hostname; } catch (_) { return 'unknown'; }
-  }
-
-  // --- Cache: chrome.storage.local ---
-
-  function getCachedClassifications(domain, signatures, callback) {
-    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
-      callback(null);
-      return;
-    }
-    var storageKey = 'ss_cache_' + domain;
-    chrome.storage.local.get(storageKey, function (result) {
-      var cache = result[storageKey];
-      if (!cache || !cache.entries) { callback(null); return; }
-      // Check TTL
-      if (Date.now() - cache.timestamp > CACHE_TTL_MS) {
-        chrome.storage.local.remove(storageKey);
-        callback(null);
-        return;
-      }
-      var lookup = {};
-      for (var i = 0; i < cache.entries.length; i++) {
-        var e = cache.entries[i];
-        lookup[e.sig] = e;
-      }
-      callback(lookup);
-    });
-  }
-
-  function saveCachedClassifications(domain, entries) {
-    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-    var storageKey = 'ss_cache_' + domain;
-    var obj = {};
-    obj[storageKey] = { timestamp: Date.now(), entries: entries };
-    chrome.storage.local.set(obj);
-  }
-
-  // --- Classification logic ---
-
-  function classifyFieldElement(el) {
-    if (!compiledRules) return null;
+  function classifyField(el) {
     if (el.tag !== 'input' && el.tag !== 'select' && el.tag !== 'textarea') return null;
-
-    var bestMatch = null;
-    var bestConfidence = 0;
-
+    var bestMatch = null, bestConfidence = 0;
     for (var i = 0; i < compiledRules.fieldRules.length; i++) {
       var rule = compiledRules.fieldRules[i];
-
-      // Check input type match (exact)
-      if (rule.inputTypeMatch) {
-        if (el.tag === 'input' && el.type === rule.inputTypeMatch) {
-          if (rule.confidence > bestConfidence) {
-            bestConfidence = rule.confidence;
-            bestMatch = rule;
-          }
-          continue;
-        }
+      if (rule.inputTypeMatch && el.tag === 'input' && el.type === rule.inputTypeMatch) {
+        if (rule.confidence > bestConfidence) { bestConfidence = rule.confidence; bestMatch = rule; }
       }
-
-      // Check autocomplete hints
-      if (rule.autocompleteHints.length > 0 && el.autocomplete) {
+      if (el.autocomplete) {
         var ac = el.autocomplete.toLowerCase();
         for (var j = 0; j < rule.autocompleteHints.length; j++) {
-          if (ac.indexOf(rule.autocompleteHints[j]) !== -1) {
-            if (rule.confidence > bestConfidence) {
-              bestConfidence = rule.confidence;
-              bestMatch = rule;
-            }
-            break;
+          if (ac.indexOf(rule.autocompleteHints[j]) !== -1 && rule.confidence > bestConfidence) {
+            bestConfidence = rule.confidence; bestMatch = rule;
           }
         }
       }
-
-      // Check keywords against name/id/placeholder/labelText
       if (rule.keywords.length > 0) {
-        var haystack = [el.name, el.id, el.placeholder, el.labelText].join(' ').toLowerCase();
-        // Normalize separators so "card-number" matches "cardnumber" and "card_number"
+        var haystack   = [el.name, el.id, el.placeholder, el.labelText].join(' ').toLowerCase();
         var normalized = haystack.replace(/[-_\s]+/g, '');
         for (var k = 0; k < rule.keywords.length; k++) {
           var kw = rule.keywords[k].replace(/[-_\s]+/g, '');
-          if (normalized.indexOf(kw) !== -1 || haystack.indexOf(rule.keywords[k]) !== -1) {
-            if (rule.confidence > bestConfidence) {
-              bestConfidence = rule.confidence;
-              bestMatch = rule;
-            }
-            break;
+          if ((normalized.indexOf(kw) !== -1 || haystack.indexOf(rule.keywords[k]) !== -1) && rule.confidence > bestConfidence) {
+            bestConfidence = rule.confidence; bestMatch = rule;
           }
         }
       }
     }
-
-    var thresholds = (piiData && piiData.confidenceThresholds) || { SENSITIVE_FIELD: 0.6 };
-    if (bestMatch && bestConfidence >= thresholds.SENSITIVE_FIELD) {
-      return {
-        sensitivity: 'SENSITIVE_FIELD',
-        reason: bestMatch.description,
-        ruleId: bestMatch.id,
-        ruleCategory: bestMatch.categoryLabel,
-        ruleToken: bestMatch.token,
-        confidence: bestConfidence,
-        matchedPatterns: []
-      };
+    if (bestMatch) return { source: 'REGEX', ruleToken: bestMatch.token, confidence: bestConfidence, reason: bestMatch.description };
+    var loose = [el.name, el.id, el.labelText].join(' ').toLowerCase();
+    if (loose.includes('address') || loose.includes('personal') || loose.includes('bio')) {
+      return { source: 'HEURISTIC', ruleToken: '[PERSONAL_DATA]', confidence: 0.4, reason: 'Suspicious field context' };
     }
     return null;
   }
 
-  function classifyTextContent(el) {
-    if (!compiledRules) return null;
-
-    var textToScan = ((el.visibleText || '') + ' ' + (el.value || '')).trim();
-    if (textToScan.length === 0) return null;
-
-    var matchedPatterns = [];
-    var thresholds = (piiData && piiData.confidenceThresholds) || { SENSITIVE_TEXT: 0.5 };
-
+  function classifyTextRegex(el) {
+    var text = ((el.visibleText || '') + ' ' + (el.value || '')).trim();
+    if (!text) return [];
+    var hits = [];
     for (var i = 0; i < compiledRules.textRules.length; i++) {
       var rule = compiledRules.textRules[i];
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(textToScan)) {
-        if (rule.confidence >= thresholds.SENSITIVE_TEXT) {
-          matchedPatterns.push({
-            token: rule.token,
-            reason: rule.description,
-            ruleId: rule.id,
-            ruleCategory: rule.categoryLabel,
-            confidence: rule.confidence
-          });
-        }
+      if (rule.regex.test(text)) {
+        hits.push({ source: 'REGEX', ruleToken: rule.token, confidence: rule.confidence, reason: rule.description });
       }
     }
-
-    if (matchedPatterns.length > 0) {
-      return {
-        sensitivity: 'SENSITIVE_TEXT',
-        reason: matchedPatterns.map(function (m) { return m.reason; }).join('; '),
-        ruleId: matchedPatterns[0].ruleId,
-        ruleCategory: matchedPatterns[0].ruleCategory,
-        confidence: Math.max.apply(null, matchedPatterns.map(function (m) { return m.confidence; })),
-        matchedPatterns: matchedPatterns
-      };
-    }
-    return null;
+    return hits;
   }
 
-  function classifySingleElement(el) {
-    // Field-level rules take priority over text-level
-    var fieldResult = classifyFieldElement(el);
-    if (fieldResult) return fieldResult;
-
-    var textResult = classifyTextContent(el);
-    if (textResult) return textResult;
-
-    return {
-      sensitivity: 'SAFE',
-      reason: '',
-      ruleId: '',
-      ruleCategory: '',
-      confidence: 0,
-      matchedPatterns: []
-    };
+  function scoreElement(el, nerHits) {
+    var fieldHit  = classifyField(el);
+    var regexHits = classifyTextRegex(el);
+    var allHits   = (fieldHit ? [fieldHit] : []).concat(regexHits).concat(nerHits || []);
+    if (allHits.length === 0) return { sensitivity: 'SAFE', confidence: 0, ruleToken: null, source: null };
+    var max  = allHits.reduce(function(a, b) { return a.confidence > b.confidence ? a : b; });
+    var tier = max.confidence >= 0.8 ? 'HIGH_CONFIDENCE_PII' : 'LOW_CONFIDENCE_PII';
+    return { sensitivity: tier, confidence: max.confidence, ruleToken: max.ruleToken, source: max.source, reason: max.reason, allHits: allHits };
   }
 
-  // --- Public API ---
-
-  function classifyElements(elements) {
-    return elements.map(function (el) {
-      var classification = classifySingleElement(el);
-      return Object.assign({}, el, classification);
+  // --- Contextual clustering ---
+  function applyContextualClustering(elements) {
+    var clusters = {};
+    elements.forEach(function(el) {
+      var parts = (el.stableRef || '').split(' > ');
+      if (parts.length > 1) {
+        var cid = parts.slice(0, -1).join(' > ');
+        if (!clusters[cid]) clusters[cid] = [];
+        clusters[cid].push(el);
+      }
     });
+    for (var cid in clusters) {
+      var group        = clusters[cid];
+      var hasSensitive = group.some(function(e) { return e.sensitivity && e.sensitivity !== 'SAFE'; });
+      if (hasSensitive) {
+        group.forEach(function(e) {
+          if (e.tag === 'input' && e.sensitivity === 'SAFE') {
+            e.sensitivity = 'LOW_CONFIDENCE_PII'; e.ruleToken = '[CLUSTERED_DATA]';
+            e.reason = 'Clustered near sensitive fields'; e.source = 'CONTEXT'; e.confidence = 0.5;
+          }
+        });
+      }
+    }
   }
+
+  // --- Public async API ---
 
   /**
-   * Async version with cache. Checks chrome.storage.local for cached results first.
-   * callback(classifiedElements, cacheStats)
+   * Main classification entry point.
+   * Returns a Promise<Array> in extension context (NER enabled),
+   * or a plain Array in benchmark/test context (NER unavailable).
    */
-  function classifyElementsWithCache(elements, callback) {
-    var domain = domainKey();
-    var sigs = elements.map(elementSignature);
-
-    getCachedClassifications(domain, sigs, function (lookup) {
-      var newEntries = [];
-      var results = elements.map(function (el, idx) {
-        var sig = sigs[idx];
-
-        // Only use cache for field elements (non-interactive text changes too often)
-        if (lookup && lookup[sig] && el.interactive) {
-          cacheStats.hits++;
-          return Object.assign({}, el, lookup[sig].classification);
-        }
-
-        cacheStats.misses++;
-        var classification = classifySingleElement(el);
-
-        if (el.interactive) {
-          newEntries.push({
-            sig: sig,
-            classification: {
-              sensitivity: classification.sensitivity,
-              reason: classification.reason,
-              ruleId: classification.ruleId,
-              ruleCategory: classification.ruleCategory,
-              ruleToken: classification.ruleToken,
-              confidence: classification.confidence,
-              matchedPatterns: classification.matchedPatterns
-            }
-          });
-        }
-
-        return Object.assign({}, el, classification);
-      });
-
-      // Merge new entries into cache
-      if (newEntries.length > 0) {
-        var allEntries = newEntries;
-        if (lookup) {
-          for (var key in lookup) {
-            if (lookup.hasOwnProperty(key)) allEntries.push(lookup[key]);
-          }
-        }
-        saveCachedClassifications(domain, allEntries);
-      }
-
-      callback(results, { hits: cacheStats.hits, misses: cacheStats.misses });
-    });
-  }
-
-  function clearCache(callback) {
-    cacheStats = { hits: 0, misses: 0 };
-    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
-      if (callback) callback();
-      return;
+  function classifyElements(elements) {
+    // Sync fast path: no chrome.runtime — benchmark / unit test env
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+      var syncResults = elements.map(function(el) { return Object.assign({}, el, scoreElement(el, [])); });
+      applyContextualClustering(syncResults);
+      return syncResults;
     }
-    chrome.storage.local.get(null, function (items) {
-      var keysToRemove = Object.keys(items).filter(function (k) { return k.indexOf('ss_cache_') === 0; });
-      if (keysToRemove.length > 0) {
-        chrome.storage.local.remove(keysToRemove, callback);
-      } else {
-        if (callback) callback();
-      }
+
+    // Async path: NER per element, all in parallel
+    var nerPromises = elements.map(function(el) {
+      var text = ((el.visibleText || '') + ' ' + (el.value || '') + ' ' + (el.labelText || '')).trim();
+      return text ? NER.classify(text) : Promise.resolve([]);
+    });
+
+    return Promise.all(nerPromises).then(function(nerPerEl) {
+      var results = elements.map(function(el, i) {
+        var nerHits = (nerPerEl[i] || [])
+          .filter(function(e) { return e.score >= 0.7; }) // reject low-confidence tokens
+          .map(function(e) {
+            return {
+              source:     'NER',
+              ruleToken:  NER.toInternalToken(e.entity_group),
+              confidence: Math.min(0.79, e.score), // NER capped at LOW tier; regex stays HIGH
+              reason:     'NER ' + e.entity_group + ' "' + (e.word || '') + '" (' + e.score.toFixed(2) + ')'
+            };
+          });
+        return Object.assign({}, el, scoreElement(el, nerHits));
+      });
+      applyContextualClustering(results);
+      return results;
     });
   }
 
-  function getCacheStats() {
-    return { hits: cacheStats.hits, misses: cacheStats.misses };
+  function classifyElementsWithCache(elements, callback) {
+    var result = classifyElements(elements);
+    // Handle both sync (Array) and async (Promise) return
+    if (result && typeof result.then === 'function') {
+      result.then(function(r) { callback(r, { hits: 0, misses: elements.length }); });
+    } else {
+      callback(result, { hits: 0, misses: elements.length });
+    }
   }
 
-  // Build TEXT_PATTERNS dynamically from loaded rules for backward compat
-  // (used by redaction-engine.js and sanitizer.js outbound check)
   function getTextPatterns() {
     if (!compiledRules) return [];
-    return compiledRules.textRules.map(function (r) {
-      return {
-        regex: new RegExp(r.regex.source, r.regex.flags),
-        token: r.token,
-        reason: r.description
-      };
+    return compiledRules.textRules.map(function(r) {
+      return { regex: new RegExp(r.regex.source, r.regex.flags), token: r.token };
     });
   }
 
+  function clearCache(callback) { callback(); }
+
   return {
-    loadPiiPatterns: loadPiiPatterns,
-    classifyElements: classifyElements,
+    loadPiiPatterns:           loadPiiPatterns,
+    classifyElements:          classifyElements,
     classifyElementsWithCache: classifyElementsWithCache,
-    clearCache: clearCache,
-    getCacheStats: getCacheStats,
-    getTextPatterns: getTextPatterns,
-    // Lazy accessor — modules that read TEXT_PATTERNS at init time get an empty array,
-    // then after loadPiiPatterns() they get the real patterns via getTextPatterns()
+    getTextPatterns:           getTextPatterns,
+    clearCache:                clearCache,
     get TEXT_PATTERNS() { return getTextPatterns(); }
   };
 })();
