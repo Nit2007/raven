@@ -18,7 +18,12 @@ var SensitivityDetector = (function () {
       {
         id: 'email_field', description: 'Email input field', category: 'EMAIL', categoryLabel: 'Email',
         confidence: 0.95, token: '[EMAIL]', scope: 'field',
-        keywords: ['email', 'e-mail', 'mail'], autocompleteHints: ['email'], inputTypeMatch: 'email'
+        keywords: ['email', 'e-mail', 'mail', 'handleoremail'], autocompleteHints: ['email'], inputTypeMatch: 'email'
+      },
+      {
+        id: 'password_field', description: 'Password input field', category: 'PASSWORD', categoryLabel: 'Password',
+        confidence: 0.99, token: '[PASSWORD]', scope: 'field',
+        keywords: ['password', 'pass', 'pwd', 'secret'], autocompleteHints: ['current-password', 'new-password'], inputTypeMatch: 'password'
       },
       {
         id: 'phone_field', description: 'Phone number field', category: 'PHONE', categoryLabel: 'Phone',
@@ -33,7 +38,7 @@ var SensitivityDetector = (function () {
       {
         id: 'name_field', description: 'Person name field', category: 'NAME', categoryLabel: 'Person Name',
         confidence: 0.85, token: '[PERSON_NAME]', scope: 'field',
-        keywords: ['name', 'username', 'user', 'fullname', 'firstname', 'lastname'], autocompleteHints: ['name', 'given-name', 'family-name', 'username'], inputTypeMatch: null
+        keywords: ['name', 'username', 'user', 'fullname', 'firstname', 'lastname', 'handle'], autocompleteHints: ['name', 'given-name', 'family-name', 'username'], inputTypeMatch: null
       },
       {
         id: 'ssn_field', description: 'SSN field', category: 'SSN', categoryLabel: 'SSN',
@@ -55,7 +60,7 @@ var SensitivityDetector = (function () {
       {
         id: 'card_text', description: 'Credit card regex', category: 'CARD', categoryLabel: 'Payment Card',
         confidence: 0.95, token: '[CARD]', scope: 'text',
-        regex: /\b(?:\d[\s\-]?){13,19}\b/g
+        regex: /\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b|\b\d{13,19}\b/g
       },
       {
         id: 'ssn_text', description: 'SSN regex', category: 'SSN', categoryLabel: 'SSN',
@@ -168,7 +173,7 @@ var SensitivityDetector = (function () {
           }
         }
       }
-      if (rule.keywords.length > 0) {
+      if (rule.keywords && rule.keywords.length > 0) {
         var haystack   = [el.name, el.id, el.placeholder, el.labelText].join(' ').toLowerCase();
         var normalized = haystack.replace(/[-_\s]+/g, '');
         for (var k = 0; k < rule.keywords.length; k++) {
@@ -224,7 +229,6 @@ var SensitivityDetector = (function () {
     };
   }
 
-  // --- Contextual clustering ---
   function applyContextualClustering(elements) {
     var clusters = {};
     elements.forEach(function(el) {
@@ -249,8 +253,6 @@ var SensitivityDetector = (function () {
       }
     }
   }
-
-  // --- Public async API ---
 
   function classifyElements(elements) {
     if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
