@@ -3,151 +3,378 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SafeScreen — Integrated Local Perception & Outbound Privacy Agent</title>
+  <title>RAVEN — Privacy-First Browser Intelligence</title>
   <style>
     :root {
-      --bg-color: #1e1e2e;
-      --card-bg: #2b2b3d;
+      --bg-color: #13131c;
+      --card-bg: #1e1e2e;
+      --card-inner-bg: #181825;
       --accent-color: #cba6f7;
       --success-color: #a6e3a1;
+      --success-bg: rgba(166, 227, 161, 0.12);
       --error-color: #f38ba8;
+      --error-bg: rgba(243, 139, 168, 0.12);
       --warning-color: #f9e2af;
+      --warning-bg: rgba(249, 226, 175, 0.12);
       --info-color: #89b4fa;
       --pii-color: #f5c2e7;
       --vision-color: #fab387;
       --text-color: #cdd6f4;
       --text-muted: #a6adc8;
+      --border-color: #313244;
+      --border-focus: #45475a;
     }
+
+    * { box-sizing: border-box; }
 
     body {
-      width: 540px;
+      width: 380px;
       margin: 0;
-      padding: 16px;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      padding: 14px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background-color: var(--bg-color);
       color: var(--text-color);
-      box-sizing: border-box;
+      font-size: 13px;
+      line-height: 1.4;
     }
 
-    h2 {
-      margin-top: 0;
-      margin-bottom: 12px;
-      font-size: 16px;
-      color: var(--accent-color);
+    /* Header & Branding */
+    .raven-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      margin-bottom: 2px;
     }
 
-    .badge {
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background-color: #313244;
-      color: var(--accent-color);
-      border: 1px solid #45475a;
-    }
-
-    .btn-group {
+    .brand-title-group {
       display: flex;
-      gap: 5px;
-      margin-bottom: 8px;
+      align-items: center;
+      gap: 8px;
     }
 
-    .btn {
-      flex: 1;
-      padding: 8px 3px;
-      font-weight: 600;
+    .brand-logo {
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: #ffffff;
+    }
+
+    .status-dot {
       font-size: 10px;
-      border: none;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dot-protected {
+      background: var(--success-bg);
+      color: var(--success-color);
+      border: 1px solid rgba(166, 227, 161, 0.3);
+    }
+
+    .dot-processing {
+      background: var(--warning-bg);
+      color: var(--warning-color);
+      border: 1px solid rgba(249, 226, 175, 0.3);
+    }
+
+    .dot-blocked {
+      background: var(--error-bg);
+      color: var(--error-color);
+      border: 1px solid rgba(243, 139, 168, 0.3);
+    }
+
+    .gear-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
       border-radius: 6px;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+
+    .gear-btn:hover {
+      background: var(--card-inner-bg);
+      color: var(--text-color);
+      border-color: var(--border-focus);
+    }
+
+    .header-subtitle {
+      margin: 0 0 12px 0;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Primary Action Button */
+    .btn-analyze {
+      width: 100%;
+      padding: 9px;
+      background: linear-gradient(135deg, #cba6f7, #89b4fa);
+      color: #11111b;
+      font-weight: 700;
+      font-size: 12px;
+      border: none;
+      border-radius: 8px;
       cursor: pointer;
       transition: opacity 0.2s ease;
       display: flex;
-      justify-content: center;
       align-items: center;
-      gap: 2px;
+      justify-content: center;
+      gap: 6px;
+      margin-bottom: 12px;
     }
 
-    .btn-capture { background: linear-gradient(135deg, #89b4fa, #74c7ec); color: #11111b; }
-    .btn-face { background: linear-gradient(135deg, #f9e2af, #fab387); color: #11111b; }
-    .btn-ocr { background: linear-gradient(135deg, #a6e3a1, #94e2d5); color: #11111b; }
-    .btn-pii { background: linear-gradient(135deg, #cba6f7, #f5c2e7); color: #11111b; }
-    .btn-vision { background: linear-gradient(135deg, #fab387, #f9e2af); color: #11111b; }
-    .btn-unified { background: linear-gradient(135deg, #a6e3a1, #89b4fa); color: #11111b; font-weight: bold; }
-    .btn-integrated { background: linear-gradient(135deg, #cba6f7, #a6e3a1); color: #11111b; font-weight: bold; padding: 10px; margin-top: 4px; width: 100%; font-size: 11px; }
+    .btn-analyze:hover { opacity: 0.92; }
+    .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .btn:hover { opacity: 0.9; }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
+    /* Cards */
     .card {
-      background-color: var(--card-bg);
-      border-radius: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
       padding: 12px;
-      margin-top: 10px;
-      border: 1px solid #313244;
+      margin-bottom: 10px;
     }
 
-    .status-row {
+    /* Status Banner Card */
+    .status-card {
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border-color);
+      transition: all 0.3s ease;
+    }
+
+    .status-card-safe {
+      background: rgba(166, 227, 161, 0.08);
+      border-color: rgba(166, 227, 161, 0.3);
+    }
+
+    .status-card-protected {
+      background: rgba(203, 166, 247, 0.08);
+      border-color: rgba(203, 166, 247, 0.3);
+    }
+
+    .status-card-processing {
+      background: rgba(249, 226, 175, 0.08);
+      border-color: rgba(249, 226, 175, 0.3);
+    }
+
+    .status-card-blocked {
+      background: rgba(243, 139, 168, 0.08);
+      border-color: rgba(243, 139, 168, 0.3);
+    }
+
+    .status-card-header {
       display: flex;
-      justify-content: space-between;
-      margin-bottom: 6px;
-      font-size: 12px;
+      gap: 12px;
+      align-items: flex-start;
     }
 
-    .status-label { color: var(--text-muted); }
-    .status-val { font-weight: 500; }
-    .status-success { color: var(--success-color); }
-    .status-error { color: var(--error-color); }
-    .status-warning { color: var(--warning-color); }
-    .status-info { color: var(--info-color); }
-    .status-pii { color: var(--pii-color); }
-    .status-vision { color: var(--vision-color); }
-
-    .subsystem-row {
-      display: flex;
-      gap: 4px;
-      margin-top: 8px;
+    .status-icon {
+      font-size: 24px;
+      line-height: 1;
+      margin-top: 2px;
     }
 
-    .subsystem-badge {
-      flex: 1;
-      font-size: 9px;
-      padding: 4px 2px;
-      text-align: center;
-      border-radius: 4px;
-      background: #181825;
-      border: 1px solid #313244;
+    .status-heading {
+      margin: 0 0 4px 0;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
     }
 
-    .timing-panel {
-      margin-top: 8px;
-      background: #181825;
-      padding: 8px 10px;
-      border-radius: 4px;
-      border: 1px solid #313244;
+    .status-desc {
+      margin: 0;
       font-size: 11px;
-      font-family: monospace;
-      display: none;
+      color: var(--text-muted);
+      line-height: 1.4;
     }
 
-    .timing-row {
+    .status-card-footer {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--success-color);
       display: flex;
       justify-content: space-between;
-      margin-bottom: 3px;
     }
-    .timing-row:last-child {
-      margin-bottom: 0;
-      border-top: 1px dashed #45475a;
-      padding-top: 3px;
+
+    /* Section Headers */
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Category List */
+    .category-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .category-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: var(--card-inner-bg);
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      font-size: 11px;
+    }
+
+    .category-badge {
+      background: #313244;
+      color: var(--accent-color);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .empty-summary {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 8px;
+      background: var(--card-inner-bg);
+      border-radius: 6px;
+      border: 1px dashed var(--border-color);
+    }
+
+    /* Privacy Pipeline Checklist */
+    .pipeline-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .pipeline-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .pipeline-item.active {
+      color: var(--text-color);
+      font-weight: 500;
+    }
+
+    .check-mark {
+      color: var(--success-color);
       font-weight: bold;
+    }
+
+    .spinner-mark {
+      color: var(--warning-color);
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Server Communication Box */
+    .server-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+    }
+
+    .server-notice {
+      margin-top: 6px;
+      font-size: 10px;
+      color: var(--success-color);
+      font-weight: 600;
+    }
+
+    /* Collapsibles */
+    details {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+
+    summary {
+      padding: 10px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    summary:hover {
+      color: var(--text-color);
+      background: var(--card-inner-bg);
+    }
+
+    .details-content {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border-color);
+      background: var(--card-inner-bg);
+      font-size: 10px;
+      font-family: monospace;
+    }
+
+    .diag-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .diag-row:last-child { margin-bottom: 0; }
+
+    /* Diagnostics & Visual Preview */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 10px;
+      font-family: system-ui, sans-serif;
+      color: var(--text-muted);
     }
 
     .visual-wrapper {
       position: relative;
-      margin-top: 10px;
-      border-radius: 4px;
-      border: 1px solid #45475a;
+      margin-top: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
       background-color: #11111b;
       overflow: hidden;
       display: none;
@@ -166,22 +393,22 @@
       pointer-events: none;
     }
 
-    /* Output Viewer Tabs & Containers */
+    /* Output Tabs & Code Viewer */
     .output-tab-bar {
       display: flex;
       gap: 4px;
-      margin-top: 12px;
-      border-bottom: 1px solid #313244;
+      margin-top: 10px;
+      border-bottom: 1px solid var(--border-color);
       padding-bottom: 4px;
     }
 
     .tab-btn {
-      background: #181825;
-      border: 1px solid #313244;
+      background: var(--bg-color);
+      border: 1px solid var(--border-color);
       color: var(--text-muted);
-      font-size: 10px;
+      font-size: 9px;
       font-weight: 600;
-      padding: 4px 8px;
+      padding: 3px 6px;
       border-radius: 4px;
       cursor: pointer;
     }
@@ -194,74 +421,40 @@
 
     .output-box {
       margin-top: 6px;
-      max-height: 180px;
+      max-height: 140px;
       overflow-y: auto;
-      font-size: 11px;
+      font-size: 10px;
       font-family: monospace;
-      background: #11111b;
-      padding: 10px;
+      background: #0d0d15;
+      padding: 8px;
       border-radius: 4px;
-      border: 1px solid #313244;
+      border: 1px solid var(--border-color);
       display: none;
       white-space: pre-wrap;
       word-break: break-all;
     }
 
-    .detection-item {
-      padding: 4px 0;
-      border-bottom: 1px dashed #313244;
-    }
-    .detection-item:last-child { border-bottom: none; }
-    .face-item { color: var(--warning-color); }
-    .ocr-item { color: var(--info-color); }
-    .pii-item { color: var(--pii-color); }
-    .vision-item { color: var(--vision-color); }
-    .redacted-item { color: var(--success-color); }
-
-    .integration-box {
-      margin-top: 10px;
-      background: #181825;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid var(--accent-color);
-      display: none;
-    }
-
-    .locality-box {
-      margin-top: 12px;
-      background: rgba(203, 166, 247, 0.1);
-      border: 1px solid rgba(203, 166, 247, 0.3);
-      padding: 10px;
-      border-radius: 6px;
-      font-size: 12px;
-    }
-
-    .locality-item {
-      display: flex;
-      justify-content: space-between;
+    .copy-btn {
+      background: #313244;
+      color: var(--accent-color);
+      border: 1px solid var(--border-focus);
+      font-size: 9px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      float: right;
       margin-bottom: 4px;
     }
-    .locality-item:last-child { margin-bottom: 0; }
 
-    .arch-notice {
-      margin-top: 8px;
-      padding: 6px 10px;
-      background: rgba(166, 227, 161, 0.15);
-      border: 1px solid var(--success-color);
-      border-radius: 4px;
-      font-size: 11px;
-      color: var(--success-color);
-      text-align: center;
-      font-weight: bold;
-    }
+    .copy-btn:hover { background: #45475a; }
 
     .error-box {
-      margin-top: 10px;
+      margin-bottom: 10px;
       padding: 10px;
-      background: rgba(243, 139, 168, 0.15);
+      background: var(--error-bg);
       border: 1px solid var(--error-color);
       border-radius: 6px;
-      font-size: 12px;
+      font-size: 11px;
       color: var(--error-color);
       display: none;
     }
@@ -269,118 +462,149 @@
 </head>
 <body>
 
-  <h2>
-    SafeScreen Agent
-    <span class="badge">Person 1 + Person 2 Integrated</span>
-  </h2>
+  <!-- Top Header -->
+  <header class="raven-header">
+    <div class="brand-title-group">
+      <span class="brand-logo">🛡️</span>
+      <span class="brand-title">RAVEN</span>
+      <span id="headerStatusDot" class="status-dot dot-protected">● Protected</span>
+    </div>
+    <button id="devModeToggle" class="gear-btn" title="Developer Diagnostics Mode">⚙️</button>
+  </header>
+  <p class="header-subtitle">Your page stays private while RAVEN works.</p>
 
-  <div class="btn-group">
-    <button id="captureBtn" class="btn btn-capture">📷 Capture</button>
-    <button id="detectFacesBtn" class="btn btn-face" disabled>👤 Face</button>
-    <button id="runOcrBtn" class="btn btn-ocr" disabled>📝 OCR</button>
-    <button id="detectPiiBtn" class="btn btn-pii" disabled>🔒 PII</button>
-    <button id="detectVisionBtn" class="btn btn-vision" disabled>👁️ Vision</button>
-    <button id="runUnifiedBtn" class="btn btn-unified" disabled>⚡ Unified (P2)</button>
-  </div>
+  <!-- Analyze / Rescan Action Button -->
+  <button id="runIntegratedBtn" class="btn-analyze">⚡ Analyze & Protect Page</button>
 
-  <button id="runIntegratedBtn" class="btn btn-integrated" disabled>🛡️ Full Integrated Pipeline (Person 1 + Person 2)</button>
-
+  <!-- Error Alert Banner -->
   <div id="errorBox" class="error-box"></div>
 
+  <!-- Real-Time Protection Status Card -->
+  <div id="statusCard" class="status-card status-card-safe">
+    <div class="status-card-header">
+      <span id="statusIcon" class="status-icon">🛡️</span>
+      <div>
+        <h3 id="statusHeading" class="status-heading">Page Protected</h3>
+        <p id="statusDesc" class="status-desc">RAVEN analyzed this page locally. No sensitive information detected that needs to be protected.</p>
+      </div>
+    </div>
+    <div class="status-card-footer">
+      <span id="localityTag">✓ Processing on this device</span>
+      <span id="timeLatencyTag">Ready</span>
+    </div>
+  </div>
+
+  <!-- Simple Protection Summary -->
   <div class="card">
-    <div class="status-row">
-      <span class="status-label">Capture Status:</span>
-      <span id="captureStatus" class="status-val">IDLE</span>
-    </div>
-    <div class="status-row">
-      <span class="status-label">Dimensions:</span>
-      <span id="imgDimensions" class="status-val">—</span>
-    </div>
-    <div class="status-row">
-      <span class="status-label">Coordinate Space:</span>
-      <span id="coordSpace" class="status-val">SCREENSHOT</span>
-    </div>
-    <div class="status-row">
-      <span class="status-label">Perception Results:</span>
-      <span id="detectionCounts" class="status-val">—</span>
-    </div>
-    <div class="status-row">
-      <span class="status-label">Person 1 Integration:</span>
-      <span id="handoffStatus" class="status-val status-success">READY FOR PERSON 1</span>
-    </div>
-
-    <!-- Subsystem Status Badges -->
-    <div class="subsystem-row">
-      <div id="subFace" class="subsystem-badge">M2 Face: —</div>
-      <div id="subOcr" class="subsystem-badge">M3 OCR: —</div>
-      <div id="subPii" class="subsystem-badge">M4 PII: —</div>
-      <div id="subVision" class="subsystem-badge">M6 Vision: —</div>
-      <div id="subFusion" class="subsystem-badge">M5 Fusion: —</div>
-    </div>
-
-    <!-- High-Resolution Stage Latency Panel -->
-    <div id="timingPanel" class="timing-panel">
-      <div class="timing-row"><span>Capture:</span><span id="tCapture">—</span></div>
-      <div class="timing-row"><span>Face Detector:</span><span id="tFace">—</span></div>
-      <div class="timing-row"><span>Visual Object Detector:</span><span id="tVision">—</span></div>
-      <div class="timing-row"><span>OCR Init (Cold/Warm):</span><span id="tOcrInit">—</span></div>
-      <div class="timing-row"><span>OCR Inference:</span><span id="tOcrInference">—</span></div>
-      <div class="timing-row"><span>OCR Normalizer:</span><span id="tNormalizer">—</span></div>
-      <div class="timing-row"><span>PII Detection:</span><span id="tPii">—</span></div>
-      <div class="timing-row"><span>Perception Fusion:</span><span id="tFusion">—</span></div>
-      <div class="timing-row"><span>Total Pipeline:</span><span id="tTotal">—</span></div>
-    </div>
-
-    <div id="integrationBox" class="integration-box">
-      <div class="status-row">
-        <span class="status-label">Person 1 Redacted Elements:</span>
-        <span id="p1RedactedCount" class="status-val status-success">0 Elements</span>
+    <div class="section-title">Protection Summary</div>
+    <div id="categoryList" class="category-list">
+      <div id="catFacesRow" class="category-row" style="display: none;">
+        <span>👤 Faces</span>
+        <strong id="catFacesVal" class="category-badge">0</strong>
       </div>
-      <div class="status-row">
-        <span class="status-label">Outbound Privacy Gate:</span>
-        <span id="p1OutboundStatus" class="status-val status-success">SAFE (0 Leaks)</span>
+      <div id="catPiiRow" class="category-row" style="display: none;">
+        <span>🔐 Personal data</span>
+        <strong id="catPiiVal" class="category-badge">0</strong>
       </div>
-      <div class="status-row">
-        <span class="status-label">Server Wire Payload:</span>
-        <span id="p1WireStatus" class="status-val status-info">Schema v1.0.0 Ready</span>
+      <div id="catDocsRow" class="category-row" style="display: none;">
+        <span>📄 Sensitive documents</span>
+        <strong id="catDocsVal" class="category-badge">0</strong>
+      </div>
+      <div id="catEmptyRow" class="empty-summary">
+        Nothing sensitive detected
       </div>
     </div>
-
-    <div id="visualWrapper" class="visual-wrapper">
-      <img id="capturePreview" alt="Viewport Frame" />
-      <canvas id="bboxOverlay"></canvas>
-    </div>
-
-    <!-- Output Viewer Tabs -->
-    <div class="output-tab-bar">
-      <button id="tabDetectionsBtn" class="tab-btn active">📝 Raw Detections</button>
-      <button id="tabRedactedBtn" class="tab-btn">🔒 Redacted Text Output</button>
-      <button id="tabJsonBtn" class="tab-btn">📤 Outbound JSON Payload</button>
-    </div>
-
-    <!-- Tab Output Box Views -->
-    <div id="detectionsView" class="output-box" style="display: block;">Click any button above to view detections.</div>
-    <div id="redactedView" class="output-box">No redaction executed yet. Run Full Integrated Pipeline to view masked text output.</div>
-    <div id="jsonView" class="output-box">No wire payload generated yet.</div>
   </div>
 
-  <div class="locality-box">
-    <div class="locality-item">
-      <span>PERCEPTION & REDACTION:</span>
-      <strong class="status-success">100% ON-DEVICE</strong>
-    </div>
-    <div class="locality-item">
-      <span>External Cloud AI APIs:</span>
-      <strong class="status-success">NOT USED</strong>
-    </div>
-    <div class="locality-item">
-      <span>Unsanitized PII Upload:</span>
-      <strong class="status-success">0% (BLOCKED BY GATE)</strong>
-    </div>
-    <div class="arch-notice">
-      PERSON 2 DETECTS ➔ PERSON 1 REDACTS
+  <!-- Privacy Pipeline Flow Checklist -->
+  <div class="card">
+    <div class="section-title">Privacy Check</div>
+    <div class="pipeline-list">
+      <div id="stepAnalysis" class="pipeline-item active">
+        <span class="check-mark">✓</span> Local analysis
+      </div>
+      <div id="stepProtected" class="pipeline-item active">
+        <span class="check-mark">✓</span> Sensitive content protected
+      </div>
+      <div id="stepGate" class="pipeline-item active">
+        <span class="check-mark">✓</span> Outbound privacy check passed
+      </div>
+      <div id="stepReady" class="pipeline-item active">
+        <span class="check-mark">✓</span> Safe context ready
+      </div>
     </div>
   </div>
+
+  <!-- Server Communication Card -->
+  <div class="card">
+    <div class="server-box">
+      <span>Server Communication</span>
+      <strong id="serverStatusBadge" class="status-dot dot-protected">● Protected / Ready</strong>
+    </div>
+    <div id="serverNotice" class="server-notice">
+      🟢 Nothing sensitive will leak
+    </div>
+  </div>
+
+  <!-- Collapsible Advanced Details -->
+  <details id="advancedDetails">
+    <summary><span>▸ Advanced details</span> <span>v1.0.0</span></summary>
+    <div class="details-content">
+      <div class="diag-row"><span>Capture dimensions:</span><span id="imgDimensions">—</span></div>
+      <div class="diag-row"><span>Coordinate space:</span><span id="coordSpace">SCREENSHOT</span></div>
+      <div class="diag-row"><span>Face detector:</span><span id="subFace">BlazeFace WASM</span></div>
+      <div class="diag-row"><span>OCR engine:</span><span id="subOcr">Tesseract.js WASM</span></div>
+      <div class="diag-row"><span>PII detector:</span><span id="subPii">Regex & Context Engine</span></div>
+      <div class="diag-row"><span>Visual detector:</span><span id="subVision">Document Feature Classifier</span></div>
+      <div class="diag-row"><span>Perception fusion:</span><span id="subFusion">Spatial Fusion Engine</span></div>
+      <div class="diag-row"><span>Total pipeline latency:</span><span id="tTotal">—</span></div>
+      <div class="diag-row"><span>Person 1 Redaction:</span><span id="p1RedactedCount">0 elements</span></div>
+      <div class="diag-row"><span>Outbound Gate Status:</span><span id="p1OutboundStatus">SAFE (0 Leaks)</span></div>
+    </div>
+  </details>
+
+  <!-- Collapsible Developer Diagnostics -->
+  <details id="devDiagnostics">
+    <summary><span>▸ Developer diagnostics</span> <span id="devModeBadge" style="font-size:9px;">OFF</span></summary>
+    <div class="details-content">
+      <div class="toggle-row">
+        <label for="showOcrOverlayCheck">Show all raw OCR bounding boxes</label>
+        <input type="checkbox" id="showOcrOverlayCheck" />
+      </div>
+
+      <!-- Screenshot preview canvas -->
+      <div id="visualWrapper" class="visual-wrapper">
+        <img id="capturePreview" alt="Viewport Frame" />
+        <canvas id="bboxOverlay"></canvas>
+      </div>
+
+      <!-- Latency Breakdown -->
+      <div id="timingPanel" style="margin-top: 8px;">
+        <div class="diag-row"><span>Capture:</span><span id="tCapture">—</span></div>
+        <div class="diag-row"><span>Face Detector:</span><span id="tFace">—</span></div>
+        <div class="diag-row"><span>Visual Detector:</span><span id="tVision">—</span></div>
+        <div class="diag-row"><span>OCR Init:</span><span id="tOcrInit">—</span></div>
+        <div class="diag-row"><span>OCR Inference:</span><span id="tOcrInference">—</span></div>
+        <div class="diag-row"><span>Normalizer:</span><span id="tNormalizer">—</span></div>
+        <div class="diag-row"><span>PII Detector:</span><span id="tPii">—</span></div>
+        <div class="diag-row"><span>Fusion Engine:</span><span id="tFusion">—</span></div>
+      </div>
+
+      <!-- Output Tabs -->
+      <div class="output-tab-bar">
+        <button id="tabDetectionsBtn" class="tab-btn active">Raw Detections</button>
+        <button id="tabRedactedBtn" class="tab-btn">Redacted Output</button>
+        <button id="tabJsonBtn" class="tab-btn">Sanitized JSON</button>
+      </div>
+
+      <div id="detectionsView" class="output-box" style="display: block;">No detections.</div>
+      <div id="redactedView" class="output-box">No redactions.</div>
+      <div id="jsonViewContainer" style="display: none; margin-top: 6px;">
+        <button id="copyJsonBtn" class="copy-btn">📋 Copy JSON</button>
+        <pre id="jsonView" class="output-box" style="display: block; margin-top: 0;"></pre>
+      </div>
+    </div>
+  </details>
 
   <script type="module" src="../../dist/src/popup/popup.js"></script>
 </body>
