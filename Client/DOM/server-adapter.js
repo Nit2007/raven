@@ -1,13 +1,12 @@
 /**
- * Server Adapter — strict, versioned contract between the extension and any backend.
+ * Server Adapter — strict, versioned contract between the extension and backend.
  *
  * Three concerns:
- *   1. buildOutboundPayload()  — shapes sanitized data into the wire format
- *   2. sendToServer()          — real fetch() wrapper with timeout, retry, and MOCK_MODE toggle
- *   3. receiveServerCommand()  — validates incoming server responses and emits events
+ *   1. buildOutboundPayload()  — shapes sanitized data into FastAPI AgentRequest contract
+ *   2. sendToServer()          — fetch() wrapper with timeout, retry, MOCK_MODE toggle & Outbound Privacy Gate
+ *   3. receiveServerCommand()  — validates incoming server response and emits RAVEN command
  *
  * Configuration is read from ServerAdapter.config and can be overridden at runtime.
- * When config.MOCK_MODE is true, sendToServer logs + returns a canned response (no network).
  */
 
 // eslint-disable-next-line no-unused-vars
@@ -16,13 +15,13 @@ var ServerAdapter = (function () {
 
   var SCHEMA_VERSION = '1.0.0';
 
-  // Valid action types the server is allowed to send
+  // Valid action types the client is allowed to accept & execute
   var VALID_ACTIONS = new Set(['CLICK', 'TYPE', 'SCROLL', 'SELECT', 'NONE']);
 
   var config = {
-    MOCK_MODE: true,
-    ENDPOINT_URL: 'http://localhost:8080/api/agent/context',
-    TIMEOUT_MS: 10000,
+    MOCK_MODE: false,
+    ENDPOINT_URL: 'http://localhost:8000/agent/act',
+    TIMEOUT_MS: 15000,
     URL_MODE: 'domain',  // 'domain' sends only hostname, 'hash' sends SHA-256 hash of full URL
     SESSION_ID: generateSessionId()
   };
@@ -45,44 +44,51 @@ var ServerAdapter = (function () {
     try { return new URL(url).hostname; } catch (_) { return 'unknown'; }
   }
 
-  // --- 1. Build outbound payload ---
+  // --- 1. Build outbound payload (FastAPI AgentRequest contract) ---
 
   function buildOutboundPayload(sanitizedPayload, taskContext) {
+    var rawElements = sanitizedPayload.elements || [];
     var redactionCount = 0;
     var categorySet = {};
-    var elements = (sanitizedPayload.elements || []).map(function (el) {
+
+    var formattedElements = rawElements.map(function (el, idx) {
       if (el.redacted) {
         redactionCount++;
         var catKey = el.ruleCategory || 'PII';
         categorySet[catKey] = (categorySet[catKey] || 0) + 1;
       }
+
+      var bbox = [0, 0, 0, 0];
+      if (el.boundingBox) {
+        var x1 = Math.round(el.boundingBox.x || 0);
+        var y1 = Math.round(el.boundingBox.y || 0);
+        var w = Math.round(el.boundingBox.width || 0);
+        var h = Math.round(el.boundingBox.height || 0);
+        bbox = [x1, y1, x1 + w, y1 + h];
+      }
+
+      var elementId = el.id || el.name || ('el_' + idx);
+      var textVal = [el.visibleText, el.value, el.labelText, el.placeholder].filter(Boolean).join(' ').trim();
+      var selector = el.id ? ('#' + el.id) : (el.name ? ('[name="' + el.name + '"]') : (el.tag || 'div'));
+
       return {
-        tag: el.tag,
-        role: el.role,
-        type: el.type,
-        name: el.name,
-        id: el.id,
-        placeholder: el.placeholder,
-        labelText: el.labelText,
-        visibleText: el.visibleText,
-        value: el.value,
-        boundingBox: el.boundingBox,
-        interactive: el.interactive,
-        sensitivity: el.sensitivity,
-        policyAction: el.policyAction,
-        redacted: el.redacted,
-        ruleId: el.ruleId || '',
-        ruleCategory: el.ruleCategory || ''
+        id: String(elementId),
+        type: String(el.type || el.tag || 'element'),
+        bbox: bbox,
+        text: textVal || '[ELEMENT]',
+        dom_selector: String(selector)
       };
     });
 
     return {
-      version: SCHEMA_VERSION,
-      sessionId: config.SESSION_ID,
-      timestamp: new Date().toISOString(),
-      url_hash: safeUrlIdentifier(sanitizedPayload.url || ''),
-      task: taskContext || '',
-      elements: elements,
+      session_id: config.SESSION_ID,
+      goal: taskContext || 'Analyze page and perform requested task',
+      screen_state: {
+        elements: formattedElements
+      },
+      action_history: [],
+      // Client privacy metadata preserved
+      url_domain: safeUrlIdentifier(sanitizedPayload.url || ''),
       redactionSummary: {
         count: redactionCount,
         categories: categorySet
@@ -95,7 +101,7 @@ var ServerAdapter = (function () {
   function sendToServer(payload, overrides) {
     var opts = Object.assign({}, config, overrides || {});
 
-    // AUTHORITATIVE OUTBOUND PRIVACY GATE CHECK
+    // AUTHORITATIVE CLIENT OUTBOUND PRIVACY GATE CHECK
     var gateCheck = (typeof Sanitizer !== 'undefined' && Sanitizer.outboundCheck)
       ? Sanitizer.outboundCheck(payload)
       : { safe: true, leaks: [] };
@@ -108,9 +114,8 @@ var ServerAdapter = (function () {
         body: {
           error: 'TRANSMISSION_BLOCKED: Sensitive PII detected in outbound payload',
           leaks: gateCheck.leaks,
-          action: 'NONE',
-          targetSelector: null,
-          confidence: 0
+          action: { action_type: 'none', reasoning: 'Transmission blocked by privacy gate' },
+          task_status: 'blocked'
         }
       });
     }
@@ -119,7 +124,6 @@ var ServerAdapter = (function () {
       console.group('[SafeScreen] Mock server send (MOCK_MODE=true)');
       console.log('Endpoint:', opts.ENDPOINT_URL);
       console.log('Payload size:', JSON.stringify(payload).length, 'bytes');
-      console.log('Elements:', payload.elements ? payload.elements.length : 0);
       console.log('Payload:', payload);
       console.groupEnd();
 
@@ -127,11 +131,14 @@ var ServerAdapter = (function () {
         status: 200,
         ok: true,
         body: {
-          requestId: 'mock-' + Date.now(),
-          action: 'NONE',
-          targetSelector: null,
-          confidence: 0,
-          message: 'Mock mode — no real request sent'
+          session_id: payload.session_id || opts.SESSION_ID,
+          action: {
+            action_type: 'none',
+            target_element_id: null,
+            value: null,
+            reasoning: 'Mock mode — no real request sent'
+          },
+          task_status: 'in_progress'
         }
       });
     }
@@ -176,11 +183,15 @@ var ServerAdapter = (function () {
       })
       .catch(function (retryErr) {
         clearTimeout(retryTimeout);
-        console.error('[SafeScreen] Retry also failed:', retryErr.message);
+        console.error('[SafeScreen] Server request failed:', retryErr.message);
         return {
           status: 0,
           ok: false,
-          body: { error: retryErr.message, action: 'NONE', targetSelector: null, confidence: 0 }
+          body: {
+            error: retryErr.message,
+            action: { action_type: 'none', reasoning: 'Server unavailable: ' + retryErr.message },
+            task_status: 'error'
+          }
         };
       });
     });
@@ -188,36 +199,57 @@ var ServerAdapter = (function () {
 
   // --- 3. Receive + validate server command ---
 
-  function receiveServerCommand(response) {
+  function receiveServerCommand(response, sentElements) {
     var body = response.body || response;
     var errors = [];
 
-    if (!body.action || typeof body.action !== 'string') {
-      errors.push('Missing or invalid "action" field');
-    } else if (!VALID_ACTIONS.has(body.action)) {
-      errors.push('Unknown action type: "' + body.action + '". Expected one of: ' + Array.from(VALID_ACTIONS).join(', '));
+    var actionObj = body.action || {};
+    var rawActionType = (actionObj.action_type || body.action || 'none').toUpperCase();
+
+    // Map FastAPI action types to client vocabulary
+    if (rawActionType === 'WAIT' || rawActionType === 'DONE' || rawActionType === 'NONE') {
+      rawActionType = 'NONE';
     }
 
-    if (body.action && body.action !== 'NONE') {
-      if (!body.targetSelector || typeof body.targetSelector !== 'string') {
-        errors.push('Action "' + body.action + '" requires a "targetSelector" string');
+    if (!VALID_ACTIONS.has(rawActionType)) {
+      errors.push('Unknown action type: "' + rawActionType + '". Expected one of: ' + Array.from(VALID_ACTIONS).join(', '));
+    }
+
+    var targetId = actionObj.target_element_id || body.targetSelector || null;
+
+    // Target validation (anti-hallucination check)
+    if (rawActionType !== 'NONE' && targetId) {
+      if (sentElements && Array.isArray(sentElements)) {
+        var found = sentElements.some(function(el) {
+          return String(el.id) === String(targetId) || String(el.dom_selector) === String(targetId);
+        });
+        if (!found) {
+          errors.push('Hallucinated target element ID: "' + targetId + '" is not in current screen elements');
+        }
       }
     }
 
-    if (body.confidence !== undefined && (typeof body.confidence !== 'number' || body.confidence < 0 || body.confidence > 1)) {
-      errors.push('"confidence" must be a number between 0 and 1');
-    }
-
     if (errors.length > 0) {
-      console.warn('[SafeScreen] Malformed server command rejected:', errors);
-      return { valid: false, errors: errors, command: null };
+      console.warn('[SafeScreen] Malformed or hallucinated server command rejected:', errors);
+      return {
+        valid: false,
+        errors: errors,
+        command: {
+          action: 'NONE',
+          targetSelector: null,
+          confidence: 0,
+          reasoning: 'Rejected unsafe/hallucinated command: ' + errors.join('; ')
+        }
+      };
     }
 
     var command = {
-      action: body.action,
-      targetSelector: body.targetSelector || null,
-      confidence: (typeof body.confidence === 'number') ? body.confidence : 0,
-      metadata: body.metadata || null
+      action: rawActionType,
+      targetSelector: targetId,
+      value: actionObj.value || body.value || null,
+      confidence: 1.0,
+      reasoning: actionObj.reasoning || body.reasoning || '',
+      task_status: body.task_status || 'in_progress'
     };
 
     try {

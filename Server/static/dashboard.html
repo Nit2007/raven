@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIH26171 — Browser Agent Live Telemetry & Safety Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #090d16;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.75);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(56, 189, 248, 0.2);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-cyan: #38bdf8;
+            --accent-green: #34d399;
+            --accent-amber: #fbbf24;
+            --accent-rose: #f87171;
+            --accent-purple: #c084fc;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            padding: 1.5rem 2rem;
+            line-height: 1.5;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.12) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(192, 132, 252, 0.08) 0px, transparent 50%);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        .header-title h1 {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #38bdf8, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-title p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        .badge-sih {
+            display: inline-block;
+            background: rgba(56, 189, 248, 0.12);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 9999px;
+            padding: 0.2rem 0.65rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-right: 0.5rem;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .pulse-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-green);
+            background: rgba(52, 211, 153, 0.1);
+            padding: 0.35rem 0.8rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(52, 211, 153, 0.25);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+        }
+
+        /* KPI Metric Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 1.25rem 1.4rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.2s ease;
+        }
+
+        .kpi-card:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-2px);
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--card-accent, var(--accent-cyan));
+        }
+
+        .kpi-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .kpi-value {
+            font-size: 2rem;
+            font-weight: 800;
+            margin: 0.4rem 0 0.2rem 0;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .kpi-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Main Content Layout */
+        .grid-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (max-width: 960px) {
+            .grid-2col { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 1.5rem;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.2rem;
+            padding-bottom: 0.8rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-header h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Latency Waterfall Bars */
+        .stage-row {
+            margin-bottom: 1.1rem;
+        }
+
+        .stage-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
+
+        .stage-bar-bg {
+            height: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .stage-bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.4s ease;
+        }
+
+        /* Simulation Controls */
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 0.5rem 0.9rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+
+        .btn:hover {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .btn-danger:hover {
+            background: rgba(248, 113, 113, 0.15);
+            border-color: var(--accent-rose);
+            color: var(--accent-rose);
+        }
+
+        /* Recent Requests Table */
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.6rem 0.8rem;
+            color: var(--text-muted);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 0.65rem 0.8rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 0.15rem 0.45rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .tag-passed { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
+        .tag-fallback { background: rgba(248, 113, 113, 0.15); color: var(--accent-rose); }
+        .tag-pii { background: rgba(251, 191, 36, 0.15); color: var(--accent-amber); }
+        .tag-inj { background: rgba(192, 132, 252, 0.15); color: var(--accent-purple); }
+
+        .quantiles-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .quantile-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.6rem;
+            text-align: center;
+        }
+
+        .quantile-lbl { font-size: 0.7rem; color: var(--text-muted); font-weight: 600; }
+        .quantile-val { font-size: 1.1rem; font-weight: 800; color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <h1><span class="badge-sih">SIH26171</span>Browser Agent Observability & Safety Console</h1>
+                <p>Person B: Action Validation, Defense-in-Depth Privacy Audit, Anti-Hallucination & Latency Profiling</p>
+            </div>
+            <div class="header-controls">
+                <div class="pulse-indicator">
+                    <span class="pulse-dot"></span>
+                    <span id="server-status">LIVE TELEMETRY</span>
+                </div>
+                <button class="btn" onclick="fetchMetrics()">Refresh</button>
+            </div>
+        </header>
+
+        <!-- KPI Metrics Grid -->
+        <div class="kpi-grid">
+            <div class="kpi-card" style="--card-accent: var(--accent-cyan);">
+                <div class="kpi-title">Total Requests</div>
+                <div class="kpi-value" id="kpi-total">0</div>
+                <div class="kpi-sub" id="kpi-pass-rate">100.0% validation pass rate</div>
+            </div>
+
+            <div class="kpi-card" style="--card-accent: var(--accent-green);">
+                <div class="kpi-title">Hallucinations Intercepted</div>
+                <div class="kpi-value" id="kpi-hallucinations">0</div>
+                <div class="kpi-sub">Nonexistent element IDs caught & repaired</div>
+            </div>
+
+            <div class="kpi-card" style="--card-accent: var(--accent-amber);">
+                <div class="kpi-title">PII Defense Alerts</div>
+                <div class="kpi-value" id="kpi-pii">0</div>
+                <div class="kpi-sub">Luhn-verified cards, emails & phones</div>
+            </div>
+
+            <div class="kpi-card" style="--card-accent: var(--accent-purple);">
+                <div class="kpi-title">Average E2E Latency</div>
+                <div class="kpi-value" id="kpi-latency">0<span style="font-size:1rem;">ms</span></div>
+                <div class="kpi-sub" id="kpi-p95">p95: 0ms · LLM: 0ms</div>
+            </div>
+        </div>
+
+        <!-- 2 Column Layout: Latency Breakdown & Demo Controls -->
+        <div class="grid-2col">
+            <!-- Stage Latency Waterfall -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>⚡ Stage Latency Breakdown (Official 15% Rubric)</h2>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">High-Res Profiler</span>
+                </div>
+
+                <div class="stage-row">
+                    <div class="stage-info">
+                        <span>1. Secondary PII Sanity Scan</span>
+                        <span id="lat-pii" style="color:var(--accent-green);">0.0 ms</span>
+                    </div>
+                    <div class="stage-bar-bg">
+                        <div id="bar-pii" class="stage-bar-fill" style="width: 2%; background: var(--accent-green);"></div>
+                    </div>
+                </div>
+
+                <div class="stage-row">
+                    <div class="stage-info">
+                        <span>2. LLM Reasoning Call (Person A)</span>
+                        <span id="lat-llm" style="color:var(--accent-cyan);">0.0 ms</span>
+                    </div>
+                    <div class="stage-bar-bg">
+                        <div id="bar-llm" class="stage-bar-fill" style="width: 80%; background: var(--accent-cyan);"></div>
+                    </div>
+                </div>
+
+                <div class="stage-row">
+                    <div class="stage-info">
+                        <span>3. Person B Validation & Loop Guard</span>
+                        <span id="lat-val" style="color:var(--accent-amber);">0.0 ms</span>
+                    </div>
+                    <div class="stage-bar-bg">
+                        <div id="bar-val" class="stage-bar-fill" style="width: 3%; background: var(--accent-amber);"></div>
+                    </div>
+                </div>
+
+                <div class="stage-row">
+                    <div class="stage-info">
+                        <span>4. End-to-End Roundtrip</span>
+                        <span id="lat-e2e" style="color:var(--accent-purple);">0.0 ms</span>
+                    </div>
+                    <div class="stage-bar-bg">
+                        <div id="bar-e2e" class="stage-bar-fill" style="width: 100%; background: var(--accent-purple);"></div>
+                    </div>
+                </div>
+
+                <!-- Statistical Quantiles -->
+                <div class="quantiles-grid">
+                    <div class="quantile-box">
+                        <div class="quantile-lbl">Median (p50)</div>
+                        <div class="quantile-val" id="q-p50">0ms</div>
+                    </div>
+                    <div class="quantile-box">
+                        <div class="quantile-lbl">90th % (p90)</div>
+                        <div class="quantile-val" id="q-p90">0ms</div>
+                    </div>
+                    <div class="quantile-box">
+                        <div class="quantile-lbl">95th % (p95)</div>
+                        <div class="quantile-val" id="q-p95">0ms</div>
+                    </div>
+                    <div class="quantile-box">
+                        <div class="quantile-lbl">99th % (p99)</div>
+                        <div class="quantile-val" id="q-p99">0ms</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Demo Trigger & Safety Inspector -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🛡️ Live Judge Demo Simulator</h2>
+                    <span style="font-size:0.75rem; color:var(--accent-cyan);">One-Click Triggers</span>
+                </div>
+                <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:1rem;">
+                    Trigger mock scenarios directly to demonstrate hallucination interception, Luhn-verified PII defense, loop guards, and metrics updates live for judges.
+                </p>
+
+                <div class="btn-group">
+                    <button class="btn" onclick="triggerTest('/agent/act', 'valid')">▶ Send Valid Action</button>
+                    <button class="btn" onclick="triggerTest('/agent/act', 'hallucination')">⚠️ Inject Hallucinated ID</button>
+                    <button class="btn" onclick="triggerTest('/agent/act', 'pii')">🔒 Inject Leaked PII</button>
+                    <button class="btn" onclick="triggerTest('/agent/act', 'loop')">🔄 Trigger Action Loop</button>
+                    <button class="btn btn-danger" onclick="resetServerMetrics()">🗑️ Reset Store</button>
+                </div>
+
+                <div style="margin-top: 1.5rem; background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; border: 1px solid var(--border);">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.3rem;">LAST SIMULATOR RESPONSE:</div>
+                    <pre id="sim-output" style="font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:var(--accent-cyan); overflow-x:auto; max-height:130px;">Ready for simulation...</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Requests Log -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📋 Real-Time Request Event Stream</h2>
+                <span style="font-size:0.75rem; color:var(--text-muted);">Last 15 Requests</span>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Session ID</th>
+                            <th>Action</th>
+                            <th>Validation</th>
+                            <th>LLM Latency</th>
+                            <th>Val Latency</th>
+                            <th>Total E2E</th>
+                            <th>Security Flags</th>
+                        </tr>
+                    </thead>
+                    <tbody id="events-body">
+                        <tr><td colspan="8" style="text-align:center; color:var(--text-muted);">No requests recorded yet. Click a simulator button above!</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchMetrics() {
+            try {
+                const res = await fetch('/metrics');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                // Update KPIs
+                document.getElementById('kpi-total').textContent = data.total_requests || 0;
+                document.getElementById('kpi-pass-rate').textContent = (data.validation_pass_rate_pct || 100).toFixed(1) + '% validation pass rate';
+                document.getElementById('kpi-hallucinations').textContent = data.hallucinations_caught || 0;
+                document.getElementById('kpi-pii').textContent = data.pii_leaks_detected || 0;
+
+                const e2eAvg = (data.avg_latencies_ms && data.avg_latencies_ms.e2e_ms) || 0;
+                const llmAvg = (data.avg_latencies_ms && data.avg_latencies_ms.llm_call_ms) || 0;
+                document.getElementById('kpi-latency').innerHTML = e2eAvg + '<span style="font-size:1rem;">ms</span>';
+
+                const e2eP95 = (data.percentiles_ms && data.percentiles_ms.e2e_ms && data.percentiles_ms.e2e_ms.p95) || e2eAvg;
+                document.getElementById('kpi-p95').textContent = `p95: ${e2eP95}ms · LLM: ${llmAvg}ms`;
+
+                // Update Waterfall
+                const piiMs = (data.avg_latencies_ms && data.avg_latencies_ms.pii_scan_ms) || 0.4;
+                const valMs = (data.avg_latencies_ms && data.avg_latencies_ms.validation_ms) || 0.6;
+                document.getElementById('lat-pii').textContent = piiMs + ' ms';
+                document.getElementById('lat-llm').textContent = llmAvg + ' ms';
+                document.getElementById('lat-val').textContent = valMs + ' ms';
+                document.getElementById('lat-e2e').textContent = e2eAvg + ' ms';
+
+                // Quantiles
+                if (data.percentiles_ms && data.percentiles_ms.e2e_ms) {
+                    const q = data.percentiles_ms.e2e_ms;
+                    document.getElementById('q-p50').textContent = q.p50 + 'ms';
+                    document.getElementById('q-p90').textContent = q.p90 + 'ms';
+                    document.getElementById('q-p95').textContent = q.p95 + 'ms';
+                    document.getElementById('q-p99').textContent = q.p99 + 'ms';
+                }
+
+                // Update Table
+                const tbody = document.getElementById('events-body');
+                if (data.recent_requests && data.recent_requests.length > 0) {
+                    tbody.innerHTML = '';
+                    const reversed = [...data.recent_requests].reverse();
+                    reversed.forEach(r => {
+                        const tr = document.createElement('tr');
+                        const timeStr = new Date(r.timestamp * 1000).toLocaleTimeString();
+                        const lat = r.stage_latencies_ms || {};
+
+                        let flags = '';
+                        if (r.pii_flagged) flags += '<span class="tag tag-pii">PII LEAK</span> ';
+                        if (r.injection_flagged) flags += '<span class="tag tag-inj">INJECTION</span> ';
+                        if (r.is_hallucination) flags += '<span class="tag tag-fallback">HALLUCINATION</span> ';
+                        if (r.is_loop) flags += '<span class="tag tag-fallback">LOOP</span> ';
+                        if (!flags) flags = '<span style="color:var(--text-muted);">-</span>';
+
+                        const valTag = r.validation_passed 
+                            ? '<span class="tag tag-passed">PASSED</span>' 
+                            : '<span class="tag tag-fallback">FALLBACK</span>';
+
+                        tr.innerHTML = `
+                            <td>${timeStr}</td>
+                            <td>${r.session_id}</td>
+                            <td><strong>${r.action_type || 'wait'}</strong></td>
+                            <td>${valTag}</td>
+                            <td>${lat.llm_call_ms || 0}ms</td>
+                            <td>${lat.validation_ms || 0}ms</td>
+                            <td><strong>${lat.e2e_ms || 0}ms</strong></td>
+                            <td>${flags}</td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to poll metrics:', err);
+            }
+        }
+
+        // Auto poll every 2 seconds
+        setInterval(fetchMetrics, 2000);
+        fetchMetrics();
+
+        async function triggerTest(url, scenario) {
+            let payload = {
+                session_id: "demo-" + Math.floor(Math.random() * 1000),
+                goal: "Demonstrate Person B Safety & Validation",
+                screen_state: {
+                    elements: [
+                        { id: "1", type: "button", bbox: [10,10,100,40], text: "Search", dom_selector: "#search" },
+                        { id: "2", type: "input", bbox: [120,10,300,40], text: "", dom_selector: "#query" }
+                    ]
+                },
+                action_history: []
+            };
+
+            if (scenario === 'pii') {
+                payload.screen_state.elements.push({
+                    id: "3", type: "span", bbox: [0,0,100,20],
+                    text: "Admin card: 4532 0150 0000 0004 helpline: +91 9876543210",
+                    dom_selector: ".admin"
+                });
+            }
+
+            if (scenario === 'loop') {
+                payload.action_history = [
+                    "click element 1",
+                    "click element 1",
+                    "click element 1"
+                ];
+            }
+
+            document.getElementById('sim-output').textContent = 'Executing request...';
+
+            try {
+                const res = await fetch('/agent/act', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const json = await res.json();
+                document.getElementById('sim-output').textContent = JSON.stringify(json, null, 2);
+                fetchMetrics();
+            } catch (e) {
+                document.getElementById('sim-output').textContent = 'Error: ' + e.message;
+            }
+        }
+
+        async function resetServerMetrics() {
+            await fetch('/session/reset', { method: 'POST' });
+            document.getElementById('sim-output').textContent = 'Store reset complete.';
+            fetchMetrics();
+        }
+    </script>
+</body>
+</html>

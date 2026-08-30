@@ -53,7 +53,7 @@ describe('RAVEN M7.1 — End-to-End Privacy Enforcement Test Suite', () => {
     assert.strictEqual(gateCheck.leaks.length, 0);
 
     const wirePayload = ServerAdapter.buildOutboundPayload(sanitized, 'normal_task');
-    const sendResult = await ServerAdapter.sendToServer(wirePayload);
+    const sendResult = await ServerAdapter.sendToServer(wirePayload, { MOCK_MODE: true });
     assert.strictEqual(sendResult.ok, true);
     assert.strictEqual(sendResult.status, 200);
   });

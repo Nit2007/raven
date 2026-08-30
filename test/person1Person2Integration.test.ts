@@ -9,7 +9,6 @@ import { UnifiedPerceptionResult } from '../src/schema/detection.js';
 const loadPerson1Module = (relativePath: string) => {
   const fullPath = path.resolve(process.cwd(), relativePath);
   let code = fs.readFileSync(fullPath, 'utf8');
-  // Expose var declarations to globalThis
   code = code.replace(/var\s+([A-Za-z0-9_]+)\s*=\s*\(function/g, 'globalThis.$1 = (function');
   const mockWindow = { location: { href: 'http://localhost/test' } };
   const mockDoc = { title: 'Test Integration Page' };
@@ -22,6 +21,7 @@ loadPerson1Module('Client/DOM/redaction-engine.js');
 loadPerson1Module('Client/DOM/sanitizer.js');
 loadPerson1Module('Client/DOM/server-adapter.js');
 
+const SensitivityDetector = (globalThis as any).SensitivityDetector;
 const RedactionEngine = (globalThis as any).RedactionEngine;
 const Sanitizer = (globalThis as any).Sanitizer;
 const ServerAdapter = (globalThis as any).ServerAdapter;
@@ -59,61 +59,70 @@ describe('Person 1 & Person 2 End-to-End Integration Suite', () => {
       }
     ];
 
+    const classifiedDom = SensitivityDetector.classifyElements(mockDomElements);
+
     const mockPerceptionResult: UnifiedPerceptionResult = {
       schemaVersion: '1.0.0',
       status: 'SUCCESS',
       generatedAt: Date.now(),
-      screenshot: { width: 1920, height: 1080, coordinateSpace: 'SCREENSHOT' },
+      screenshot: { width: 1280, height: 720, coordinateSpace: 'SCREENSHOT' },
       detections: [
         {
-          id: 'det_pii_email_1',
-          type: 'PII_CANDIDATE',
-          source: 'pii',
-          bbox: { x: 100, y: 150, width: 200, height: 30 },
-          confidence: 0.98,
-          metadata: { category: 'EMAIL', text: 'john.doe@example.com' }
-        },
-        {
-          id: 'det_pii_phone_1',
-          type: 'PII_CANDIDATE',
-          source: 'pii',
-          bbox: { x: 100, y: 200, width: 200, height: 30 },
-          confidence: 0.95,
-          metadata: { category: 'PHONE', text: '+91 98765 43210' }
-        },
-        {
-          id: 'det_face_1',
+          id: 'face_1',
           type: 'FACE',
           source: 'face',
-          bbox: { x: 500, y: 100, width: 150, height: 150 },
-          confidence: 0.92,
+          bbox: { x: 500, y: 100, width: 120, height: 120 },
+          confidence: 0.96,
           metadata: { detector: 'blazeface-wasm' }
         },
         {
-          id: 'det_vis_aadhaar_1',
-          type: 'VISUAL_REGION',
-          source: 'vision',
-          bbox: { x: 400, y: 300, width: 320, height: 200 },
-          confidence: 0.90,
-          metadata: { category: 'AADHAAR_CARD' }
+          id: 'ocr_pii_1',
+          type: 'PII_CANDIDATE',
+          source: 'pii',
+          bbox: { x: 100, y: 200, width: 180, height: 25 },
+          confidence: 0.92,
+          metadata: { text: '+91 98765 43210', category: 'PHONE' }
         }
       ],
-      counts: { faces: 1, ocrRegions: 2, piiCandidates: 2, visualObjects: 1, total: 4 },
-      timing: { captureMs: 45, faceMs: 38, ocrInitMs: 100, ocrInferenceMs: 420, normalizationMs: 1, piiMs: 1, visionMs: 36, fusionMs: 1, totalMs: 642 },
-      locality: { isLocal: true, externalAiUsed: false, networkUploadPerformed: false },
+      counts: {
+        faces: 1,
+        ocrRegions: 1,
+        piiCandidates: 1,
+        visualObjects: 0,
+        total: 2
+      },
+      timing: {
+        captureMs: 15,
+        faceMs: 25,
+        ocrInitMs: 10,
+        ocrInferenceMs: 120,
+        normalizationMs: 2,
+        piiMs: 3,
+        fusionMs: 5,
+        totalMs: 180
+      },
+      locality: {
+        isLocal: true,
+        externalAiUsed: false,
+        networkUploadPerformed: false
+      },
       subsystems: {
         face: { status: 'SUCCESS' },
         ocr: { status: 'SUCCESS' },
-        pii: { status: 'SUCCESS' },
-        vision: { status: 'SUCCESS' }
+        pii: { status: 'SUCCESS' }
       }
     };
 
-    // Step A: Adapt Person 2 result into Person 1 DOM elements
-    const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(mockDomElements, mockPerceptionResult);
-    assert.strictEqual(integratedElements.length, 5); // 3 DOM elements + 1 Face + 1 Visual Aadhaar
+    // Step A: Merge Person 2 perception detections with Person 1 DOM elements
+    const integratedElements = PerceptionAdapter.mergePerceptionWithDOM(
+      classifiedDom,
+      mockPerceptionResult
+    );
 
-    // Verify email and phone DOM elements received Person 2 sensitivity tags
+    assert.ok(Array.isArray(integratedElements));
+    assert.strictEqual(integratedElements.length, 4); // 3 DOM elements + 1 visual-face (OCR PII merged onto DOM phone)
+
+    // Verify sensitivity classifications
     const emailEl = integratedElements.find(e => e.id === 'email-id');
     assert.ok(emailEl);
     assert.strictEqual(emailEl.sensitivity, 'HIGH_CONFIDENCE_PII');
@@ -126,7 +135,7 @@ describe('Person 1 & Person 2 End-to-End Integration Suite', () => {
 
     // Step B: Person 1 Redaction Engine
     const redactedElements = RedactionEngine.redactElements(integratedElements);
-    assert.strictEqual(redactedElements.length, 5);
+    assert.strictEqual(redactedElements.length, 4);
 
     // Verify redaction was applied
     const redactedEmail = redactedElements.find((e: ElementInfo) => e.id === 'email-id');
@@ -148,8 +157,7 @@ describe('Person 1 & Person 2 End-to-End Integration Suite', () => {
 
     // Step D: Person 1 Server Adapter Payload Generation
     const outboundWirePayload = ServerAdapter.buildOutboundPayload(sanitizedPayload, 'test_checkout_task');
-    assert.strictEqual(outboundWirePayload.version, '1.0.0');
-    assert.strictEqual(outboundWirePayload.task, 'test_checkout_task');
+    assert.strictEqual(outboundWirePayload.goal, 'test_checkout_task');
 
     // Verify NO raw email or phone leaks exist anywhere in final JSON string
     const jsonString = JSON.stringify(outboundWirePayload);
@@ -174,9 +182,9 @@ describe('Person 1 & Person 2 End-to-End Integration Suite', () => {
       }
     };
 
-    assert.strictEqual(mockPerceptionResult.screenshot.coordinateSpace, 'SCREENSHOT');
+    const merged = PerceptionAdapter.mergePerceptionWithDOM([], mockPerceptionResult);
+    assert.strictEqual(merged.length, 0);
     assert.strictEqual(mockPerceptionResult.locality.isLocal, true);
     assert.strictEqual(mockPerceptionResult.locality.externalAiUsed, false);
-    assert.strictEqual(mockPerceptionResult.locality.networkUploadPerformed, false);
   });
 });

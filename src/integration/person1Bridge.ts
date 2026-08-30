@@ -94,7 +94,7 @@ if (!isPerson1RedactionEngine(rawRedactionEngine)) {
   };
 }
 
-// 3. Sanitizer Implementation / Bridge (Bypasses native Chrome window.Sanitizer collision)
+// 3. Sanitizer Implementation / Bridge
 let rawSanitizer = (globalThis as any).Sanitizer || (typeof window !== 'undefined' ? (window as any).Sanitizer : null);
 if (!isPerson1Sanitizer(rawSanitizer)) {
   rawSanitizer = {
@@ -125,9 +125,12 @@ if (!isPerson1Sanitizer(rawSanitizer)) {
       };
     },
     outboundCheck: (payload: any) => {
-      const text = (payload.elements || [])
-        .map((e: any) => [e.value, e.visibleText].filter(Boolean).join(' '))
-        .join(' ');
+      let text = '';
+      if (payload.screen_state && Array.isArray(payload.screen_state.elements)) {
+        text = payload.screen_state.elements.map((e: any) => e.text || '').join(' ');
+      } else if (Array.isArray(payload.elements)) {
+        text = payload.elements.map((e: any) => [e.value, e.visibleText, e.text].filter(Boolean).join(' ')).join(' ');
+      }
 
       const leakPatterns = [
         { regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/, label: 'email address' },
@@ -152,24 +155,46 @@ let rawServerAdapter = (globalThis as any).ServerAdapter || (typeof window !== '
 if (!isPerson1ServerAdapter(rawServerAdapter)) {
   rawServerAdapter = {
     buildOutboundPayload: (sanitizedPayload: any, taskContext?: string) => {
+      const rawElements = sanitizedPayload.elements || [];
       let count = 0;
       const categories: Record<string, number> = {};
-      const elements = (sanitizedPayload.elements || []).map((el: any) => {
+
+      const formattedElements = rawElements.map((el: any, idx: number) => {
         if (el.redacted) {
           count++;
           const cat = el.ruleCategory || 'PII';
           categories[cat] = (categories[cat] || 0) + 1;
         }
-        return el;
+
+        let bbox = [0, 0, 0, 0];
+        if (el.boundingBox) {
+          const x1 = Math.round(el.boundingBox.x || 0);
+          const y1 = Math.round(el.boundingBox.y || 0);
+          const w = Math.round(el.boundingBox.width || 0);
+          const h = Math.round(el.boundingBox.height || 0);
+          bbox = [x1, y1, x1 + w, y1 + h];
+        }
+
+        const elementId = el.id || el.name || (`el_${idx}`);
+        const textVal = [el.visibleText, el.value, el.labelText, el.placeholder].filter(Boolean).join(' ').trim();
+        const selector = el.id ? `#${el.id}` : (el.name ? `[name="${el.name}"]` : (el.tag || 'div'));
+
+        return {
+          id: String(elementId),
+          type: String(el.type || el.tag || 'element'),
+          bbox: bbox,
+          text: textVal || '[ELEMENT]',
+          dom_selector: String(selector)
+        };
       });
 
       return {
-        version: '1.0.0',
-        sessionId: 'ss-' + Date.now().toString(36),
-        timestamp: new Date().toISOString(),
-        url_hash: 'localhost',
-        task: taskContext || '',
-        elements,
+        session_id: 'ss-' + Date.now().toString(36),
+        goal: taskContext || 'Analyze page and perform requested task',
+        screen_state: {
+          elements: formattedElements
+        },
+        action_history: [],
         redactionSummary: { count, categories }
       };
     },
@@ -179,14 +204,72 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
         return Promise.resolve({
           status: 403,
           ok: false,
-          body: { error: 'TRANSMISSION_BLOCKED: Sensitive PII detected in outbound payload', leaks: check.leaks }
+          body: {
+            error: 'TRANSMISSION_BLOCKED: Sensitive PII detected in outbound payload',
+            leaks: check.leaks,
+            action: { action_type: 'none', reasoning: 'Transmission blocked by privacy gate' },
+            task_status: 'blocked'
+          }
         });
       }
       return Promise.resolve({
         status: 200,
         ok: true,
-        body: { requestId: 'mock-' + Date.now(), action: 'NONE', confidence: 0 }
+        body: {
+          session_id: payload.session_id || 'ss-test',
+          action: { action_type: 'none', target_element_id: null, value: null, reasoning: 'Mock success' },
+          task_status: 'in_progress'
+        }
       });
+    },
+    receiveServerCommand: (response: any, sentElements?: any[]) => {
+      const body = response.body || response;
+      const errors: string[] = [];
+      const actionObj = body.action || {};
+      let rawActionType = String(actionObj.action_type || body.action || 'none').toUpperCase();
+
+      if (rawActionType === 'WAIT' || rawActionType === 'DONE' || rawActionType === 'NONE') {
+        rawActionType = 'NONE';
+      }
+
+      const VALID_SET = new Set(['CLICK', 'TYPE', 'SCROLL', 'SELECT', 'NONE']);
+      if (!VALID_SET.has(rawActionType)) {
+        errors.push(`Unknown action type: "${rawActionType}"`);
+      }
+
+      const targetId = actionObj.target_element_id || body.targetSelector || null;
+      if (rawActionType !== 'NONE' && targetId && sentElements && Array.isArray(sentElements)) {
+        const found = sentElements.some((el: any) => String(el.id) === String(targetId) || String(el.dom_selector) === String(targetId));
+        if (!found) {
+          errors.push(`Hallucinated target element ID: "${targetId}" is not in current screen elements`);
+        }
+      }
+
+      if (errors.length > 0) {
+        return {
+          valid: false,
+          errors,
+          command: {
+            action: 'NONE',
+            targetSelector: null,
+            confidence: 0,
+            reasoning: 'Rejected unsafe command: ' + errors.join('; ')
+          }
+        };
+      }
+
+      return {
+        valid: true,
+        errors: [],
+        command: {
+          action: rawActionType,
+          targetSelector: targetId,
+          value: actionObj.value || null,
+          confidence: 1.0,
+          reasoning: actionObj.reasoning || '',
+          task_status: body.task_status || 'in_progress'
+        }
+      };
     }
   };
 }
