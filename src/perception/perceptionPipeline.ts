@@ -128,22 +128,13 @@ export class LocalPerceptionPipeline {
   ): Promise<UnifiedPerceptionResult> {
     const tTotalStart = performance.now();
 
-    // 1. Measure Face Detection
-    const tFaceStart = performance.now();
-    let faceRes: { detections: DetectionResult[]; status: 'SUCCESS' | 'FAILED' | 'SKIPPED'; error?: string };
-    try {
-      const resp = await this.faceDetector.detectFaces(input, imageSource);
-      faceRes = resp.success
-        ? { detections: resp.detections, status: 'SUCCESS' }
-        : { detections: [], status: 'FAILED', error: resp.error };
-    } catch (err) {
-      faceRes = { detections: [], status: 'FAILED', error: err instanceof Error ? err.message : String(err) };
-    }
-    const faceMs = Math.round(performance.now() - tFaceStart);
+    console.log('[RAVEN:M2] CAPTURE START', { width: input.width, height: input.height });
 
-    // 2. Measure OCR Initialization & Inference
+    // 1 & 2. Concurrent Execution: Face Detection + OCR Text Recognition
+    const tFaceStart = performance.now();
     const tOcrInitStart = performance.now();
     let ocrInitMs = 0;
+
     if (!this.isOcrInitialized) {
       try {
         await this.ocrEngine.init();
@@ -154,23 +145,46 @@ export class LocalPerceptionPipeline {
       }
     }
 
+    console.log('[RAVEN:M3] OCR START');
+    console.log('[RAVEN:M4] FACE START');
+
     const tOcrInfStart = performance.now();
-    let ocrRes: { detections: DetectionResult[]; status: 'SUCCESS' | 'FAILED' | 'SKIPPED'; error?: string };
-    let rawOcrWords: any[] = [];
-    try {
-      const resp = await this.ocrEngine.recognizeText(input, imageSource);
-      if (resp.success) {
-        ocrRes = { detections: resp.detections, status: 'SUCCESS' };
-        rawOcrWords = resp.words || [];
-      } else {
-        ocrRes = { detections: [], status: 'FAILED', error: resp.error };
-      }
-    } catch (err) {
-      ocrRes = { detections: [], status: 'FAILED', error: err instanceof Error ? err.message : String(err) };
-    }
+
+    const [faceResp, ocrResp] = await Promise.all([
+      this.faceDetector.detectFaces(input, imageSource).catch(err => ({
+        success: false,
+        detections: [],
+        latencyMs: Math.round(performance.now() - tFaceStart),
+        engineInfo: 'BlazeFace WASM',
+        error: err instanceof Error ? err.message : String(err)
+      })),
+      this.ocrEngine.recognizeText(input, imageSource).catch(err => ({
+        success: false,
+        detections: [],
+        words: [],
+        latencyMs: Math.round(performance.now() - tOcrInfStart),
+        engineInfo: 'Tesseract.js WASM v5',
+        error: err instanceof Error ? err.message : String(err)
+      }))
+    ]);
+
+    const faceMs = Math.round(performance.now() - tFaceStart);
     const ocrInferenceMs = Math.round(performance.now() - tOcrInfStart);
 
-    // 3. Measure Visual Sensitive Document Detection (M6.1)
+    console.log('[RAVEN:M3] OCR COMPLETE', { latencyMs: ocrInferenceMs, regions: ocrResp.detections?.length || 0 });
+    console.log('[RAVEN:M4] FACE COMPLETE', { latencyMs: faceMs, faces: faceResp.detections?.length || 0 });
+
+    const faceRes = faceResp.success
+      ? { detections: faceResp.detections, status: 'SUCCESS' as const }
+      : { detections: [], status: 'FAILED' as const, error: faceResp.error };
+
+    const rawOcrWords = (ocrResp as any).words || [];
+    const ocrRes = ocrResp.success
+      ? { detections: ocrResp.detections, status: 'SUCCESS' as const }
+      : { detections: [], status: 'FAILED' as const, error: ocrResp.error };
+
+    // 3. Visual Sensitive Document Detection (M6.1)
+    console.log('[RAVEN:M5] VISION START');
     const tVisionStart = performance.now();
     let visionRes: { detections: DetectionResult[]; status: 'SUCCESS' | 'FAILED' | 'SKIPPED'; error?: string };
     let visionMs = 0;
@@ -184,8 +198,9 @@ export class LocalPerceptionPipeline {
       visionRes = { detections: [], status: 'FAILED', error: err instanceof Error ? err.message : String(err) };
       visionMs = Math.round(performance.now() - tVisionStart);
     }
+    console.log('[RAVEN:M5] VISION COMPLETE', { latencyMs: visionMs, objects: visionRes.detections.length });
 
-    // 4. Measure Normalization
+    // 4. Token Normalization
     const tNormStart = performance.now();
     let normalizationMs = 0;
     if (rawOcrWords.length > 0) {
@@ -193,7 +208,8 @@ export class LocalPerceptionPipeline {
       normalizationMs = Math.round((performance.now() - tNormStart) * 100) / 100;
     }
 
-    // 5. Measure PII Candidate Detection
+    // 5. PII Candidate Detection
+    console.log('[RAVEN:M6] PII/FUSION START');
     const tPiiStart = performance.now();
     let piiRes: { detections: DetectionResult[]; status: 'SUCCESS' | 'FAILED' | 'SKIPPED'; error?: string };
     try {
@@ -208,7 +224,7 @@ export class LocalPerceptionPipeline {
     }
     const piiMs = Math.round((performance.now() - tPiiStart) * 100) / 100;
 
-    // 6. Measure Fusion
+    // 6. Spatial Perception Fusion
     const tFusionStart = performance.now();
     const timing: StageTiming = {
       captureMs: 0,
@@ -237,6 +253,12 @@ export class LocalPerceptionPipeline {
 
     unifiedResult.timing.fusionMs = fusionMs;
     unifiedResult.timing.totalMs = totalMs;
+
+    console.log('[RAVEN:M6] PII/FUSION COMPLETE', {
+      latencyMs: fusionMs,
+      totalUnifiedElements: unifiedResult.detections.length,
+      totalPipelineMs: totalMs
+    });
 
     return unifiedResult;
   }

@@ -247,8 +247,23 @@ export class AgentController {
     });
 
     // STEP 12: OBSERVING & PAGE STABILIZATION
+    const lowerGoal = this.taskGoal.toLowerCase();
+    const isDirectScrollGoal = command.action === 'SCROLL' && (
+      lowerGoal.includes('scroll down') ||
+      lowerGoal.includes('scroll up') ||
+      lowerGoal === 'scroll'
+    );
+
+    if (execReceipt.verified && isDirectScrollGoal) {
+      console.log('[RAVEN TRACE 17] Task completed on direct scroll verification');
+      this.status = 'COMPLETED';
+      const msg = execReceipt.message || `Action ${command.action} verified and task completed cleanly.`;
+      onStateChange?.(this.status, msg);
+      return { done: true, success: true, status: this.status, message: msg };
+    }
+
     this.status = 'OBSERVING';
-    onStateChange?.(this.status, `Step ${currentStep}/${this.maxIterations}: Action executed (${execReceipt.message}). Waiting for page to stabilize...`);
+    onStateChange?.(this.status, `Iteration ${currentStep}/${this.maxIterations}: Action executed (${execReceipt.message}). Waiting for page to stabilize...`);
 
     console.log('[RAVEN TRACE 16] Re-observing page');
     await new Promise(r => setTimeout(r, this.stabilizeDelayMs));
