@@ -66,7 +66,8 @@ export class ActionExecutor {
           const idMatch = String(el.id || '').toLowerCase() === String(targetSelector).toLowerCase();
           const selectorMatch = String(el.dom_selector || '').toLowerCase() === String(targetSelector).toLowerCase();
           const nameMatch = String(el.name || '').toLowerCase() === String(targetSelector).toLowerCase();
-          return idMatch || selectorMatch || nameMatch;
+          const indexMatch = String(targetSelector).toLowerCase().startsWith('el_') || /^\d+$/.test(String(targetSelector));
+          return idMatch || selectorMatch || nameMatch || indexMatch;
         });
 
         if (!targetExists) {
@@ -125,8 +126,17 @@ export class ActionExecutor {
       };
     }
 
+    console.log(`[RAVEN ActionExecutor] Dispatched EXECUTE_ACTION command | Action: ${command.action} | Target: ${command.targetSelector || 'NONE'}`);
+
     try {
       const res = await dispatcherFn(command);
+      console.log(`[RAVEN ActionExecutor] EXECUTE_ACTION response received:`, {
+        success: res.success,
+        dispatched: res.dispatched,
+        message: res.message,
+        error: res.error
+      });
+
       return {
         success: Boolean(res.success && res.dispatched),
         action: command.action,
@@ -138,6 +148,8 @@ export class ActionExecutor {
         error: res.error
       };
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[RAVEN ActionExecutor] EXECUTE_ACTION FAILED:`, errMsg);
       return {
         success: false,
         action: command.action,
@@ -145,7 +157,7 @@ export class ActionExecutor {
         execution: 'REAL_BROWSER',
         dispatched: false,
         verified: false,
-        error: err instanceof Error ? err.message : String(err)
+        error: errMsg
       };
     }
   }

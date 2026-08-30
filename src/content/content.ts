@@ -1,7 +1,7 @@
 /**
  * Content script running inside web pages.
  * Handles DOM element extraction for analysis, PING handshakes, and strict real browser action execution.
- * M9.3 — Real Browser Action Dispatch & Handshake Engine.
+ * M9.3 — Action Dispatch Channel, Logging & Execution Engine.
  */
 
 (() => {
@@ -328,9 +328,10 @@
 
   // Global listener for runtime messages from Popup & Background worker
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[RAVEN Content Script] Received message type:', message?.type);
+    console.log('[RAVEN Content Script] MESSAGE RECEIVED | Type:', message?.type);
 
     if (message.type === 'PING') {
+      console.log('[RAVEN Content Script] Responding to PING -> RAVEN_CONTENT_READY');
       sendResponse({ success: true, type: 'RAVEN_CONTENT_READY' });
       return true;
     }
@@ -339,6 +340,7 @@
       try {
         console.log('[RAVEN Content Script] Processing EXTRACT_DOM request');
         const elements = extractLiveDomElements();
+        console.log(`[RAVEN Content Script] Extracted ${elements.length} live DOM elements`);
         sendResponse({ success: true, elements });
       } catch (err) {
         console.error('[RAVEN Content Script] Error during EXTRACT_DOM:', err);
@@ -349,8 +351,9 @@
 
     if (message.type === 'EXECUTE_ACTION') {
       try {
-        console.log('[RAVEN Content Script] Processing EXECUTE_ACTION request:', message.command);
+        console.log('[RAVEN Content Script] EXECUTE_ACTION RECEIVED | Action:', message.command?.action, '| Target:', message.command?.targetSelector);
         const result = executeValidatedAction(message.command);
+        console.log('[RAVEN Content Script] Returning ActionReceipt to popup:', result);
         sendResponse(result);
       } catch (err) {
         console.error('[RAVEN Content Script] Error during EXECUTE_ACTION:', err);
@@ -361,7 +364,7 @@
           execution: 'REAL_BROWSER',
           dispatched: false,
           verified: false,
-          error: String(err)
+          error: `ACTION_HANDLER_FAILED: ${err instanceof Error ? err.message : String(err)}`
         });
       }
       return true;
