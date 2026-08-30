@@ -95,7 +95,7 @@ if (!isPerson1RedactionEngine(rawRedactionEngine)) {
 }
 
 // 3. Sanitizer Implementation / Bridge
-let rawSanitizer = (globalThis as any).Sanitizer || (typeof window !== 'undefined' ? (window as any).Sanitizer : null);
+let rawSanitizer = (globalThis as any).Person1Sanitizer || (globalThis as any).Sanitizer || (typeof window !== 'undefined' ? (window as any).Sanitizer : null);
 if (!isPerson1Sanitizer(rawSanitizer)) {
   rawSanitizer = {
     sanitizeContext: (elements: ElementInfo[]) => {
@@ -277,9 +277,37 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
   };
 }
 
+function getSanitizer() {
+  const p1 = (globalThis as any).Person1Sanitizer || (typeof window !== 'undefined' ? (window as any).Person1Sanitizer : null);
+  if (isPerson1Sanitizer(p1)) return p1;
+  const g = (globalThis as any).Sanitizer;
+  if (isPerson1Sanitizer(g)) return g;
+  const w = typeof window !== 'undefined' ? (window as any).Sanitizer : null;
+  if (isPerson1Sanitizer(w)) return w;
+  return rawSanitizer;
+}
+
+function getSensitivityDetector() {
+  const g = (globalThis as any).SensitivityDetector || (typeof window !== 'undefined' ? (window as any).SensitivityDetector : null);
+  if (isPerson1SensitivityDetector(g)) return g;
+  return rawDetector;
+}
+
+function getRedactionEngine() {
+  const g = (globalThis as any).RedactionEngine || (typeof window !== 'undefined' ? (window as any).RedactionEngine : null);
+  if (isPerson1RedactionEngine(g)) return g;
+  return rawRedactionEngine;
+}
+
+function getServerAdapter() {
+  const g = (globalThis as any).ServerAdapter || (typeof window !== 'undefined' ? (window as any).ServerAdapter : null);
+  if (isPerson1ServerAdapter(g)) return g;
+  return rawServerAdapter;
+}
+
 export const Person1Bridge = {
-  get SensitivityDetector() { return (globalThis as any).SensitivityDetector || rawDetector; },
-  get RedactionEngine() { return (globalThis as any).RedactionEngine || rawRedactionEngine; },
-  get Sanitizer() { return (globalThis as any).Sanitizer || rawSanitizer; },
-  get ServerAdapter() { return (globalThis as any).ServerAdapter || rawServerAdapter; }
+  get SensitivityDetector() { return getSensitivityDetector(); },
+  get RedactionEngine() { return getRedactionEngine(); },
+  get Sanitizer() { return getSanitizer(); },
+  get ServerAdapter() { return getServerAdapter(); }
 };

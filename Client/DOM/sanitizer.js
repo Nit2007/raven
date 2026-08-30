@@ -92,9 +92,18 @@ var Sanitizer = (function () {
     });
   }
 
-  return {
+  var obj = {
     sanitizeContext: sanitizeContext,
     outboundCheck: outboundCheck,
     mockSendToServer: mockSendToServer
   };
+
+  if (typeof globalThis !== 'undefined') {
+    globalThis.Person1Sanitizer = obj;
+  }
+  if (typeof window !== 'undefined') {
+    window.Person1Sanitizer = obj;
+  }
+
+  return obj;
 })();
