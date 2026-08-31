@@ -1,0 +1,392 @@
+// Utility to inspect if a global object has Person 1 method signatures
+function isPerson1Sanitizer(obj) {
+    return obj && typeof obj.sanitizeContext === 'function' && typeof obj.outboundCheck === 'function';
+}
+function isPerson1SensitivityDetector(obj) {
+    return obj && typeof obj.classifyElements === 'function';
+}
+function isPerson1RedactionEngine(obj) {
+    return obj && typeof obj.redactElements === 'function';
+}
+function isPerson1ServerAdapter(obj) {
+    return obj && typeof obj.buildOutboundPayload === 'function' && typeof obj.sendToServer === 'function';
+}
+// 1. Sensitivity Detector Implementation / Bridge
+let rawDetector = globalThis.SensitivityDetector || (typeof window !== 'undefined' ? window.SensitivityDetector : null);
+if (!isPerson1SensitivityDetector(rawDetector)) {
+    rawDetector = {
+        classifyElements: (elements) => {
+            return elements.map(el => {
+                if ((el.sensitivity && el.sensitivity !== 'SAFE') || el.redacted === true || el.tag?.startsWith('visual-')) {
+                    return el;
+                }
+                const text = [el.name, el.id, el.placeholder, el.labelText, el.visibleText, el.value, el.type].filter(Boolean).join(' ').toLowerCase();
+                let cat = '';
+                let tok = '';
+                let conf = 0;
+                if (el.type === 'password' || text.includes('password') || text.includes('pass') || text.includes('secret')) {
+                    cat = 'PASSWORD';
+                    tok = '[PASSWORD]';
+                    conf = 0.99;
+                }
+                else if (text.includes('card') || text.includes('credit') || text.includes('cvv') || text.includes('cc-number') || /\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b|\b\d{13,19}\b/.test(text)) {
+                    cat = 'CARD';
+                    tok = '[CARD]';
+                    conf = 0.95;
+                }
+                else if (el.type === 'email' || text.includes('email') || text.includes('handleoremail') || /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(text)) {
+                    cat = 'EMAIL';
+                    tok = '[EMAIL]';
+                    conf = 0.95;
+                }
+                else if (el.type === 'tel' || text.includes('phone') || text.includes('mobile') || text.includes('cell') || /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,4}/.test(text)) {
+                    cat = 'PHONE';
+                    tok = '[PHONE]';
+                    conf = 0.90;
+                }
+                else if (text.includes('name') || text.includes('username') || text.includes('fullname') || text.includes('firstname') || text.includes('lastname') || text.includes('handle')) {
+                    cat = 'NAME';
+                    tok = '[PERSON_NAME]';
+                    conf = 0.85;
+                }
+                else if (text.includes('ssn') || /\b\d{3}[\s\-]\d{2}[\s\-]\d{4}\b/.test(text)) {
+                    cat = 'SSN';
+                    tok = '[SSN]';
+                    conf = 0.95;
+                }
+                if (conf >= 0.80) {
+                    return {
+                        ...el,
+                        sensitivity: 'HIGH_CONFIDENCE_PII',
+                        confidence: conf,
+                        ruleCategory: cat,
+                        ruleToken: tok,
+                        ruleId: `rule_${cat.toLowerCase()}`,
+                        source: 'REGEX',
+                        reason: `DOM ${cat} Classification`
+                    };
+                }
+                return { ...el, sensitivity: 'SAFE', confidence: 0, ruleToken: null, source: null };
+            });
+        }
+    };
+}
+// 2. Redaction Engine Implementation / Bridge
+let rawRedactionEngine = globalThis.RedactionEngine || (typeof window !== 'undefined' ? window.RedactionEngine : null);
+if (!isPerson1RedactionEngine(rawRedactionEngine)) {
+    rawRedactionEngine = {
+        redactElements: (elements) => {
+            return elements.map(el => {
+                const isSensitive = el.sensitivity && el.sensitivity !== 'SAFE';
+                const action = isSensitive ? 'REDACT' : 'KEEP';
+                const out = { ...el, policyAction: action };
+                if (isSensitive) {
+                    const rawToken = el.ruleToken || 'PII';
+                    const tokenName = rawToken.replace(/[\[\]]/g, '');
+                    let customMask = '{' + tokenName + '}';
+                    if (tokenName === 'FACE' || el.tag === 'visual-face')
+                        customMask = '[FACE_REGION]';
+                    else if (el.tag === 'visual-document')
+                        customMask = el.visibleText || '[SENSITIVE_DOCUMENT]';
+                    if (out.value !== undefined && out.value !== null) {
+                        out.value = customMask;
+                    }
+                    if (out.visibleText !== undefined && out.visibleText !== null) {
+                        out.visibleText = customMask;
+                    }
+                    if (out.text !== undefined && out.text !== null) {
+                        out.text = customMask;
+                    }
+                    out.redacted = true;
+                }
+                else {
+                    out.redacted = false;
+                }
+                return out;
+            });
+        }
+    };
+}
+// 3. Sanitizer Implementation / Bridge
+let rawSanitizer = globalThis.Person1Sanitizer || globalThis.Sanitizer || (typeof window !== 'undefined' ? window.Sanitizer : null);
+if (!isPerson1Sanitizer(rawSanitizer)) {
+    rawSanitizer = {
+        sanitizeContext: (elements) => {
+            const classified = Person1Bridge.SensitivityDetector.classifyElements(elements);
+            const redacted = Person1Bridge.RedactionEngine.redactElements(classified);
+            return {
+                timestamp: new Date().toISOString(),
+                url: typeof window !== 'undefined' ? window.location?.href || 'http://localhost' : 'http://localhost',
+                title: typeof document !== 'undefined' ? document.title || 'Page' : 'Page',
+                elementCount: redacted.length,
+                elements: redacted.map((el) => {
+                    const isSensitive = (el.sensitivity && el.sensitivity !== 'SAFE') || el.redacted === true;
+                    const isAlreadyMasked = typeof el.visibleText === 'string' && el.visibleText.startsWith('[') && el.visibleText.endsWith(']');
+                    const token = isAlreadyMasked ? el.visibleText : (el.ruleToken || (el.ruleCategory ? `[${el.ruleCategory}]` : (el.sensitivity && el.sensitivity !== 'HIGH_CONFIDENCE_PII' ? `[${el.sensitivity}]` : '[REDACTED]')));
+                    return {
+                        tag: el.tag,
+                        role: el.role,
+                        type: el.type,
+                        name: el.name,
+                        id: el.id,
+                        placeholder: isSensitive ? token : el.placeholder,
+                        labelText: isSensitive ? token : el.labelText,
+                        visibleText: isSensitive ? token : el.visibleText,
+                        text: isSensitive ? token : el.text,
+                        value: isSensitive ? token : el.value,
+                        boundingBox: el.boundingBox,
+                        interactive: el.interactive,
+                        sensitivity: el.sensitivity || (isSensitive ? 'HIGH_CONFIDENCE_PII' : 'SAFE'),
+                        policyAction: el.policyAction || (isSensitive ? 'REDACT' : 'KEEP'),
+                        redacted: isSensitive ? true : false,
+                        ruleId: el.ruleId || '',
+                        ruleCategory: el.ruleCategory || ''
+                    };
+                })
+            };
+        },
+        outboundCheck: (payload) => {
+            let text = '';
+            if (payload.screen_state && Array.isArray(payload.screen_state.elements)) {
+                text = payload.screen_state.elements.map((e) => e.text || '').join(' ');
+            }
+            else if (Array.isArray(payload.elements)) {
+                text = payload.elements.map((e) => [e.value, e.visibleText, e.text].filter(Boolean).join(' ')).join(' ');
+            }
+            const leakPatterns = [
+                { regex: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/, label: 'email address' },
+                { regex: /(?:\+?\d{1,3}[\s\-.]?)?\(?\d{2,4}\)?[\s\-.]?\d{3,4}[\s\-.]?\d{3,4}/, label: 'phone number' },
+                { regex: /\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b|\b\d{13,19}\b/, label: 'credit card number' }
+            ];
+            const leaks = [];
+            for (const pat of leakPatterns) {
+                const match = text.match(pat.regex);
+                if (match) {
+                    leaks.push(`${pat.label}: "${match[0]}"`);
+                }
+            }
+            return { safe: leaks.length === 0, leaks };
+        }
+    };
+}
+// 4. Server Adapter Implementation / Bridge
+let rawServerAdapter = globalThis.ServerAdapter || (typeof window !== 'undefined' ? window.ServerAdapter : null);
+if (!isPerson1ServerAdapter(rawServerAdapter)) {
+    rawServerAdapter = {
+        buildOutboundPayload: (sanitizedPayload, taskContext, executionContext, taskIntent) => {
+            const rawElements = sanitizedPayload.elements || [];
+            let count = 0;
+            const categories = {};
+            const formattedElements = rawElements.map((el, idx) => {
+                if (el.redacted) {
+                    count++;
+                    const cat = el.ruleCategory || 'PII';
+                    categories[cat] = (categories[cat] || 0) + 1;
+                }
+                let bbox = [0, 0, 0, 0];
+                if (el.boundingBox) {
+                    const x1 = Math.round(el.boundingBox.x || 0);
+                    const y1 = Math.round(el.boundingBox.y || 0);
+                    const w = Math.round(el.boundingBox.width || 0);
+                    const h = Math.round(el.boundingBox.height || 0);
+                    bbox = [x1, y1, x1 + w, y1 + h];
+                }
+                const elementId = el.id || el.name || (`el_${idx}`);
+                const textVal = [el.visibleText, el.value, el.labelText, el.placeholder].filter(Boolean).join(' ').trim();
+                let selector = `el_${idx}`;
+                if (el.id) {
+                    selector = `#${el.id}`;
+                }
+                else if (el.name) {
+                    selector = `[name="${el.name}"]`;
+                }
+                else if (el.value) {
+                    selector = `[value="${el.value}"]`;
+                }
+                else if (el.tag) {
+                    selector = `${el.tag}[data-idx="${idx}"]`;
+                }
+                return {
+                    id: String(elementId),
+                    type: String(el.type || el.tag || 'element'),
+                    bbox: bbox,
+                    text: textVal || '[ELEMENT]',
+                    dom_selector: String(selector)
+                };
+            });
+            const execContext = executionContext || {
+                goal_status: 'IN_PROGRESS',
+                current_sub_goal: taskContext,
+                completed_actions: [],
+                recent_actions: [],
+                last_action: null,
+                previous_page_fingerprint: null,
+                current_page_fingerprint: null
+            };
+            const taskIntentPayload = taskIntent || null;
+            return {
+                session_id: 'ss-' + Date.now().toString(36),
+                goal: taskContext || 'Analyze page and perform requested task',
+                task_intent: taskIntentPayload,
+                screen_state: {
+                    elements: formattedElements
+                },
+                action_history: execContext.completed_actions || [],
+                execution_context: execContext,
+                redactionSummary: { count, categories }
+            };
+        },
+        sendToServer: async (payload) => {
+            const check = rawSanitizer.outboundCheck(payload);
+            if (!check.safe) {
+                return {
+                    status: 403,
+                    ok: false,
+                    body: {
+                        error: 'TRANSMISSION_BLOCKED: Sensitive PII detected in outbound payload',
+                        leaks: check.leaks,
+                        action: { action_type: 'none', reasoning: 'Transmission blocked by privacy gate' },
+                        task_status: 'blocked'
+                    }
+                };
+            }
+            // Unit test mock mode (MOCK_MODE=true in Node.js test runner)
+            if (typeof globalThis.MOCK_MODE !== 'undefined' && globalThis.MOCK_MODE) {
+                console.log('[SafeScreen] Mock server send (MOCK_MODE=true)');
+                return {
+                    status: 200,
+                    ok: true,
+                    body: {
+                        session_id: payload.session_id || 'ss-test',
+                        action: { action_type: 'none', target_element_id: null, value: null, reasoning: 'Test mode success' },
+                        task_status: 'in_progress'
+                    }
+                };
+            }
+            // REAL PRODUCTION BROWSER EXECUTION PATH — NO HARDCODED MOCK SUCCESS
+            const endpoint = globalThis.SERVER_URL || 'http://localhost:8000/agent/act';
+            console.log('[RAVEN TRACE 4] Sending real /agent/act request', {
+                endpoint,
+                goal: payload.goal,
+                elementCount: payload?.screen_state?.elements?.length
+            });
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const status = response.status;
+                const ok = response.ok;
+                console.log('[RAVEN Server] RESPONSE', { status, ok });
+                const body = await response.json();
+                console.log('[RAVEN TRACE 5] Server returned action', {
+                    action: body?.action?.action_type || body?.action,
+                    target: body?.action?.target_element_id || body?.targetSelector,
+                    taskStatus: body?.task_status
+                });
+                return {
+                    status,
+                    ok,
+                    body
+                };
+            }
+            catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                console.error('[RAVEN Server] FETCH FAILED:', errMsg);
+                return {
+                    status: 503,
+                    ok: false,
+                    body: {
+                        error: `SERVER_UNAVAILABLE: Could not connect to RAVEN server at ${endpoint} (${errMsg})`,
+                        action: { action_type: 'none', reasoning: 'Server connection failed' },
+                        task_status: 'error'
+                    }
+                };
+            }
+        },
+        receiveServerCommand: (response, sentElements) => {
+            const body = response.body || response;
+            const errors = [];
+            const actionObj = body.action || {};
+            let rawActionType = String(actionObj.action_type || body.action || 'none').toUpperCase();
+            if (rawActionType === 'WAIT' || rawActionType === 'NONE') {
+                rawActionType = 'NONE';
+            }
+            if (rawActionType === 'COMPLETED' || rawActionType === 'FINISH') {
+                rawActionType = 'DONE';
+            }
+            const VALID_SET = new Set(['CLICK', 'TYPE', 'SCROLL', 'SELECT', 'NONE', 'DONE']);
+            if (!VALID_SET.has(rawActionType)) {
+                errors.push(`Unknown action type: "${rawActionType}"`);
+            }
+            const targetId = actionObj.target_element_id || body.targetSelector || null;
+            if (rawActionType !== 'NONE' && rawActionType !== 'DONE' && rawActionType !== 'SCROLL' && targetId && sentElements && Array.isArray(sentElements)) {
+                const found = sentElements.some((el) => String(el.id) === String(targetId) || String(el.dom_selector) === String(targetId));
+                if (!found) {
+                    errors.push(`Hallucinated target element ID: "${targetId}" is not in current screen elements`);
+                }
+            }
+            if (errors.length > 0) {
+                return {
+                    valid: false,
+                    errors,
+                    command: {
+                        action: 'NONE',
+                        targetSelector: null,
+                        confidence: 0,
+                        reasoning: 'Rejected unsafe command: ' + errors.join('; ')
+                    }
+                };
+            }
+            return {
+                valid: true,
+                errors: [],
+                command: {
+                    action: rawActionType,
+                    targetSelector: targetId,
+                    value: actionObj.value || null,
+                    confidence: 1,
+                    reasoning: actionObj.reasoning || '',
+                    task_status: body.task_status || 'in_progress'
+                }
+            };
+        }
+    };
+}
+function getSanitizer() {
+    const p1 = globalThis.Person1Sanitizer || (typeof window !== 'undefined' ? window.Person1Sanitizer : null);
+    if (isPerson1Sanitizer(p1))
+        return p1;
+    const g = globalThis.Sanitizer;
+    if (isPerson1Sanitizer(g))
+        return g;
+    const w = typeof window !== 'undefined' ? window.Sanitizer : null;
+    if (isPerson1Sanitizer(w))
+        return w;
+    return rawSanitizer;
+}
+function getSensitivityDetector() {
+    const g = globalThis.SensitivityDetector || (typeof window !== 'undefined' ? window.SensitivityDetector : null);
+    if (isPerson1SensitivityDetector(g))
+        return g;
+    return rawDetector;
+}
+function getRedactionEngine() {
+    const g = globalThis.RedactionEngine || (typeof window !== 'undefined' ? window.RedactionEngine : null);
+    if (isPerson1RedactionEngine(g))
+        return g;
+    return rawRedactionEngine;
+}
+function getServerAdapter() {
+    const g = globalThis.ServerAdapter || (typeof window !== 'undefined' ? window.ServerAdapter : null);
+    if (isPerson1ServerAdapter(g))
+        return g;
+    return rawServerAdapter;
+}
+export const Person1Bridge = {
+    get SensitivityDetector() { return getSensitivityDetector(); },
+    get RedactionEngine() { return getRedactionEngine(); },
+    get Sanitizer() { return getSanitizer(); },
+    get ServerAdapter() { return getServerAdapter(); }
+};
