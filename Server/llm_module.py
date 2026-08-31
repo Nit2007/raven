@@ -78,6 +78,11 @@ RULES:
   - Use action_type 'type' for text inputs.
   - Use action_type 'scroll' for scrolling down.
   - Use action_type 'done' when task is finished.
+
+ACTION REPETITION POLICY:
+  - An action that has already been successfully executed and locally verified MUST NOT be proposed again unless the user's goal explicitly requires repetition.
+  - The existence of a target element is NOT sufficient reason to execute an action. The action must advance an incomplete user goal.
+  - If the user's goal is already satisfied by completed actions, return action_type 'done'.
 """
 
 _FALLBACK_ACTION = {
@@ -190,8 +195,19 @@ def heuristic_action_fallback(elements: list[dict], goal: str, history: list[str
             "reasoning": f"Executing scroll down for goal '{goal}'",
         }
 
-    # 3. Type / Input goal match
+    # 3. Type / Input / Search goal match
     if "type" in goal_lower or "enter" in goal_lower or "search" in goal_lower:
+        # Extract target user value dynamically from goal
+        import re
+        val_match = re.search(r"['\"]([^'\"]+)['\"]", goal)
+        extracted_val = val_match.group(1) if val_match else None
+        if not extracted_val:
+            search_match = re.search(r"search\s+(?:for\s+)?([^,.;]+)", goal, re.IGNORECASE)
+            if search_match:
+                extracted_val = search_match.group(1).strip()
+
+        target_val = extracted_val or goal.replace("search", "").replace("type", "").replace("enter", "").strip() or "query"
+
         for el in elements:
             el_id = str(el.get("id", ""))
             el_type = str(el.get("type", "")).lower()
@@ -199,8 +215,8 @@ def heuristic_action_fallback(elements: list[dict], goal: str, history: list[str
                 return {
                     "action_type": "type",
                     "target_element_id": el_id,
-                    "value": "SIH 2026",
-                    "reasoning": f"Typing into input field '{el_id}'",
+                    "value": target_val,
+                    "reasoning": f"Typing target value '{target_val}' into input field '{el_id}'",
                 }
 
     # 4. Click goal match

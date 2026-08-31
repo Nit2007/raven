@@ -80,13 +80,27 @@ var ServerAdapter = (function () {
       };
     });
 
+    var execContext = (arguments.length > 2 && arguments[2]) ? arguments[2] : {
+      goal_status: 'IN_PROGRESS',
+      current_sub_goal: taskContext,
+      completed_actions: [],
+      recent_actions: [],
+      last_action: null,
+      previous_page_fingerprint: null,
+      current_page_fingerprint: null
+    };
+
+    var taskIntentPayload = (arguments.length > 3 && arguments[3]) ? arguments[3] : null;
+
     return {
       session_id: config.SESSION_ID,
       goal: taskContext || 'Analyze page and perform requested task',
+      task_intent: taskIntentPayload,
       screen_state: {
         elements: formattedElements
       },
-      action_history: [],
+      action_history: execContext.completed_actions || [],
+      execution_context: execContext,
       // Client privacy metadata preserved
       url_domain: safeUrlIdentifier(sanitizedPayload.url || ''),
       redactionSummary: {

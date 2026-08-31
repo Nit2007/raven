@@ -23,6 +23,9 @@ if (!isPerson1SensitivityDetector(rawDetector)) {
   rawDetector = {
     classifyElements: (elements: ElementInfo[]) => {
       return elements.map(el => {
+        if ((el.sensitivity && el.sensitivity !== 'SAFE') || el.redacted === true || el.tag?.startsWith('visual-')) {
+          return el;
+        }
         const text = [el.name, el.id, el.placeholder, el.labelText, el.visibleText, el.value, el.type].filter(Boolean).join(' ').toLowerCase();
         let cat = '';
         let tok = '';
@@ -84,6 +87,9 @@ if (!isPerson1RedactionEngine(rawRedactionEngine)) {
           if (out.visibleText !== undefined && out.visibleText !== null) {
             out.visibleText = customMask;
           }
+          if ((out as any).text !== undefined && (out as any).text !== null) {
+            (out as any).text = customMask;
+          }
           out.redacted = true;
         } else {
           out.redacted = false;
@@ -99,29 +105,37 @@ let rawSanitizer = (globalThis as any).Person1Sanitizer || (globalThis as any).S
 if (!isPerson1Sanitizer(rawSanitizer)) {
   rawSanitizer = {
     sanitizeContext: (elements: ElementInfo[]) => {
+      const classified = Person1Bridge.SensitivityDetector.classifyElements(elements);
+      const redacted = Person1Bridge.RedactionEngine.redactElements(classified);
       return {
         timestamp: new Date().toISOString(),
         url: typeof window !== 'undefined' ? window.location?.href || 'http://localhost' : 'http://localhost',
         title: typeof document !== 'undefined' ? document.title || 'Page' : 'Page',
-        elementCount: elements.length,
-        elements: elements.map(el => ({
-          tag: el.tag,
-          role: el.role,
-          type: el.type,
-          name: el.name,
-          id: el.id,
-          placeholder: el.placeholder,
-          labelText: el.labelText,
-          visibleText: el.visibleText,
-          value: el.value,
-          boundingBox: el.boundingBox,
-          interactive: el.interactive,
-          sensitivity: el.sensitivity,
-          policyAction: el.policyAction,
-          redacted: el.redacted,
-          ruleId: el.ruleId || '',
-          ruleCategory: el.ruleCategory || ''
-        }))
+        elementCount: redacted.length,
+        elements: redacted.map((el: any) => {
+          const isSensitive = (el.sensitivity && el.sensitivity !== 'SAFE') || el.redacted === true;
+          const isAlreadyMasked = typeof el.visibleText === 'string' && el.visibleText.startsWith('[') && el.visibleText.endsWith(']');
+          const token = isAlreadyMasked ? el.visibleText : (el.ruleToken || (el.ruleCategory ? `[${el.ruleCategory}]` : (el.sensitivity && el.sensitivity !== 'HIGH_CONFIDENCE_PII' ? `[${el.sensitivity}]` : '[REDACTED]')));
+          return {
+            tag: el.tag,
+            role: el.role,
+            type: el.type,
+            name: el.name,
+            id: el.id,
+            placeholder: isSensitive ? token : el.placeholder,
+            labelText: isSensitive ? token : el.labelText,
+            visibleText: isSensitive ? token : el.visibleText,
+            text: isSensitive ? token : (el as any).text,
+            value: isSensitive ? token : el.value,
+            boundingBox: el.boundingBox,
+            interactive: el.interactive,
+            sensitivity: el.sensitivity || (isSensitive ? 'HIGH_CONFIDENCE_PII' : 'SAFE'),
+            policyAction: el.policyAction || (isSensitive ? 'REDACT' : 'KEEP'),
+            redacted: isSensitive ? true : false,
+            ruleId: el.ruleId || '',
+            ruleCategory: el.ruleCategory || ''
+          };
+        })
       };
     },
     outboundCheck: (payload: any) => {
@@ -154,7 +168,7 @@ if (!isPerson1Sanitizer(rawSanitizer)) {
 let rawServerAdapter = (globalThis as any).ServerAdapter || (typeof window !== 'undefined' ? (window as any).ServerAdapter : null);
 if (!isPerson1ServerAdapter(rawServerAdapter)) {
   rawServerAdapter = {
-    buildOutboundPayload: (sanitizedPayload: any, taskContext?: string) => {
+    buildOutboundPayload: (sanitizedPayload: any, taskContext?: string, executionContext?: any, taskIntent?: any) => {
       const rawElements = sanitizedPayload.elements || [];
       let count = 0;
       const categories: Record<string, number> = {};
@@ -198,13 +212,27 @@ if (!isPerson1ServerAdapter(rawServerAdapter)) {
         };
       });
 
+      const execContext = executionContext || {
+        goal_status: 'IN_PROGRESS',
+        current_sub_goal: taskContext,
+        completed_actions: [],
+        recent_actions: [],
+        last_action: null,
+        previous_page_fingerprint: null,
+        current_page_fingerprint: null
+      };
+
+      const taskIntentPayload = taskIntent || null;
+
       return {
         session_id: 'ss-' + Date.now().toString(36),
         goal: taskContext || 'Analyze page and perform requested task',
+        task_intent: taskIntentPayload,
         screen_state: {
           elements: formattedElements
         },
-        action_history: [],
+        action_history: execContext.completed_actions || [],
+        execution_context: execContext,
         redactionSummary: { count, categories }
       };
     },

@@ -51,6 +51,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const stepGate = document.getElementById('stepGate') as HTMLDivElement;
   const stepReady = document.getElementById('stepReady') as HTMLDivElement;
 
+  // Goal Status & Action History Card Elements
+  const goalStatusBadge = document.getElementById('goalStatusBadge') as HTMLSpanElement;
+  const currentSubGoalText = document.getElementById('currentSubGoalText') as HTMLSpanElement;
+  const actionHistoryList = document.getElementById('actionHistoryList') as HTMLDivElement;
+
   // Server Communication Box
   const serverStatusBadge = document.getElementById('serverStatusBadge') as HTMLSpanElement;
   const serverNotice = document.getElementById('serverNotice') as HTMLDivElement;
@@ -166,8 +171,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // State Management for Popup UI (3-Phase Transaction Model)
   const updateUIState = (state: AgentStatus, message?: string) => {
     statusCard.className = 'status-card';
+    const taskState = controller.getTaskState();
 
     if (state === 'PHASE_1_ANALYSIS' || state === 'ANALYZING' || state === 'PROTECTING') {
+      if (taskState.phase1Completed && (taskState.phase === 'SERVER_PLANNING' || taskState.phase === 'EXECUTING' || taskState.phase === 'VERIFYING' || taskState.phase === 'COMPLETED')) {
+        // Do not regress UI to Phase 1 during re-observations
+        return;
+      }
       statusCard.classList.add('status-card-processing');
       headerStatusDot.className = 'status-dot dot-processing';
       headerStatusDot.textContent = '● Phase 1/3';
@@ -271,6 +281,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusIcon.textContent = '❌';
       statusHeading.textContent = 'TASK FAILED';
       statusDesc.textContent = message || 'An unexpected error occurred during execution.';
+    }
+
+    if (goalStatusBadge && controller.goalManager) {
+      const gs = controller.goalManager.getState();
+      goalStatusBadge.textContent = gs.status === 'COMPLETED' ? '✓ Completed' : '● In Progress';
+      goalStatusBadge.style.color = gs.status === 'COMPLETED' ? 'var(--success-color)' : 'var(--warning-color)';
+      currentSubGoalText.textContent = gs.currentSubGoal || (gs.status === 'COMPLETED' ? 'All sub-goals satisfied' : controller.taskGoal);
+      
+      const historyEntries = controller.actionMemory.getHistory();
+      if (historyEntries.length > 0) {
+        actionHistoryList.innerHTML = historyEntries.map(a => `
+          <div class="pipeline-item active">
+            <span class="check-mark">${a.executionStatus === 'VERIFIED' ? '✓' : (a.executionStatus === 'FAILED' ? '✗' : '⏳')}</span>
+            ${a.type} ${a.targetText || a.targetElementId || ''} (${a.executionStatus})
+          </div>
+        `).join('');
+      } else {
+        actionHistoryList.innerHTML = '<div class="pipeline-item"><span class="check-mark">⏳</span> Waiting for action...</div>';
+      }
     }
   };
 

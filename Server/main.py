@@ -82,8 +82,10 @@ class AgentRequest(BaseModel):
 
     session_id: str
     goal: str
+    task_intent: Optional[dict[str, Any]] = None
     screen_state: ScreenState
     action_history: list[str] = Field(default_factory=list)
+    execution_context: Optional[dict[str, Any]] = None
     # Optional: base64-encoded redacted screenshot from the extension.
     screenshot_b64: Optional[str] = None
 
