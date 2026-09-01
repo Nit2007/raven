@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Browser Agent",
+  "version": "0.1.0",
+  "description": "Task-driven browser automation agent. Reads the DOM, asks Gemini for one next action, executes it, and repeats until the task is done.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}
