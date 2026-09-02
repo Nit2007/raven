@@ -1,27 +1,26 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Gemini Browser Agent</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>Gemini Browser Agent</h1>
+  <div class="header">
+    <h1>🤖 Gemini Browser Agent</h1>
+  </div>
   <textarea id="task" rows="3" placeholder="e.g. Search this page for &quot;contact&quot; and click the first match"></textarea>
   <div class="row">
     <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
   </div>
-  <div id="confirmBox" class="confirm-box" hidden>
-    <p id="confirmText"></p>
-    <div class="row">
-      <button id="confirmBtn">Confirm</button>
-      <button id="cancelBtn">Cancel</button>
-    </div>
+  <div id="status" class="status status-idle">Ready</div>
+  <ul id="log">
+    <li class="empty-state">No actions executed yet.</li>
+  </ul>
+  <div class="footer">
+    <a id="optionsLink" href="#">⚙️ API keys / Settings</a>
   </div>
-  <div id="status" class="status">Idle</div>
-  <ol id="log"></ol>
-  <a id="optionsLink" href="#">API keys / options</a>
   <script src="popup.js"></script>
 </body>
 </html>

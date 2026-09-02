@@ -2,26 +2,25 @@
 //
 // Lightweight client for the Gemini Developer API
 // (generativelanguage.googleapis.com). Rotates across user-supplied API keys
-// and a small fallback list of models.
+// and a configurable fallback list of models.
 //
 // Design: single-action-per-iteration. The model is asked for exactly ONE
 // next browser action based on the current DOM snapshot — never a full
 // multi-step plan — so it can't hallucinate steps that depend on page state
 // it hasn't actually seen yet. Keeps each prompt small (cheap) too.
 //
-// No API keys are hardcoded here. Keys live only in chrome.storage.local,
-// set via the extension's options page.
+// No API keys, endpoints, or models are hardcoded here. Settings live in chrome.storage.local,
+// configurable via the extension's options page.
 
-// Model names change over time — re-check https://ai.google.dev/gemini-api/docs/models
-// if calls start failing with 404s. These were active (not retired) as of
-// September 2026.
-const DEFAULT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+const DEFAULT_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
 const ALLOWED_ACTIONS = new Set(['click', 'type', 'press', 'scroll', 'wait', 'look', 'navigate', 'done']);
 
 export class GeminiClient {
   constructor(options = {}) {
-    this.models = options.models && options.models.length ? options.models : DEFAULT_MODELS;
+    this.customModels = options.models && options.models.length ? options.models : null;
+    this.customBaseUrl = options.baseUrl || null;
   }
 
   async getApiKeys() {
@@ -31,6 +30,29 @@ export class GeminiClient {
       throw new Error('No Gemini API key configured. Open the extension options page and add at least one key.');
     }
     return keys;
+  }
+
+  async getModels() {
+    if (this.customModels && this.customModels.length) {
+      return this.customModels;
+    }
+    const { geminiModels } = await chrome.storage.local.get(['geminiModels']);
+    const models = Array.isArray(geminiModels) ? geminiModels.map((m) => m.trim()).filter(Boolean) : [];
+    if (models.length) {
+      return models;
+    }
+    return DEFAULT_MODELS;
+  }
+
+  async getBaseUrl() {
+    if (this.customBaseUrl) {
+      return this.customBaseUrl;
+    }
+    const { geminiBaseUrl } = await chrome.storage.local.get(['geminiBaseUrl']);
+    if (geminiBaseUrl && typeof geminiBaseUrl === 'string' && geminiBaseUrl.trim()) {
+      return geminiBaseUrl.trim().replace(/\/+$/, '');
+    }
+    return DEFAULT_API_BASE_URL;
   }
 
   async getStartKeyIndex(keyCount) {
@@ -44,6 +66,28 @@ export class GeminiClient {
   }
 
   /**
+   * Test an API key with a given model
+   */
+  async testApiKey(key, model = 'gemini-2.5-flash', baseUrl = DEFAULT_API_BASE_URL) {
+    const cleanModel = model.replace(/^models\//, '').trim();
+    const cleanBaseUrl = (baseUrl || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, '');
+    const url = `${cleanBaseUrl}/models/${cleanModel}:generateContent?key=${key.trim()}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'Respond with {"ok":true}' }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+      })
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`HTTP ${response.status}: ${err.slice(0, 300)}`);
+    }
+    return true;
+  }
+
+  /**
    * @param {string} task - plain-language description of what the user wants done
    * @param {object} observation - { url, title, elements, visibleText, actionHistory, screenshot?, observationWasSparse? }
    * @returns {Promise<object>} a normalized single action
@@ -51,6 +95,8 @@ export class GeminiClient {
   async chooseNextAction(task, observation) {
     const prompt = buildSingleActionPrompt(task, observation, observation.memory || []);
     const keys = await this.getApiKeys();
+    const models = await this.getModels();
+    const baseUrl = await this.getBaseUrl();
     const startIndex = await this.getStartKeyIndex(keys.length);
 
     const parts = [];
@@ -71,8 +117,9 @@ export class GeminiClient {
       const keyIndex = (startIndex + k) % keys.length;
       const currentKey = keys[keyIndex];
 
-      for (const model of this.models) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
+      for (const model of models) {
+        const cleanModel = model.replace(/^models\//, '').trim();
+        const url = `${baseUrl}/models/${cleanModel}:generateContent?key=${currentKey}`;
 
         try {
           const response = await fetch(url, {
@@ -86,8 +133,8 @@ export class GeminiClient {
 
           if (!response.ok) {
             const errBody = await response.text();
-            lastError = `[key ${keyIndex}, ${model}] HTTP ${response.status}: ${errBody.slice(0, 300)}`;
-            // Could be a bad model name, quota, or rate limit — try the next
+            lastError = `[key ${keyIndex}, ${cleanModel}] HTTP ${response.status}: ${errBody.slice(0, 300)}`;
+            // Could be an invalid model name, quota, or rate limit — try the next
             // model on this key, and eventually the next key.
             continue;
           }
@@ -102,7 +149,7 @@ export class GeminiClient {
           await this.setLastGoodKeyIndex(keyIndex); // start here next call — rolling use
           return action;
         } catch (err) {
-          lastError = `[key ${keyIndex}, ${model}] ${err instanceof Error ? err.message : String(err)}`;
+          lastError = `[key ${keyIndex}, ${cleanModel}] ${err instanceof Error ? err.message : String(err)}`;
         }
       }
     }
@@ -111,13 +158,13 @@ export class GeminiClient {
   }
 }
 
-function buildSingleActionPrompt(task, observation, memory) {
+export function buildSingleActionPrompt(task, observation, memory) {
   const elementsText = JSON.stringify(observation.elements || []);
   const visibleText = JSON.stringify(observation.visibleText || []);
   const historyText = JSON.stringify(observation.actionHistory || []);
 
   let memoryBlock = '';
-  if (memory.length) {
+  if (memory && memory.length) {
     const numbered = memory.map((m, i) => `  ${i + 1}. ${m}`).join('\n');
     memoryBlock = `\nYOUR MEMORY (notes you wrote to yourself on previous steps):\n${numbered}\n`;
   }
@@ -177,7 +224,7 @@ Return ONLY one of these JSON shapes (every shape MUST include the "thought" and
 "memory" is your private note to your future self — use it to track progress, observations, and context.`;
 }
 
-function parseJsonLikeAction(rawText) {
+export function parseJsonLikeAction(rawText) {
   const text = String(rawText || '').trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1] : text;
@@ -189,7 +236,7 @@ function parseJsonLikeAction(rawText) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
-function normalizeSingleAction(value) {
+export function normalizeSingleAction(value) {
   const action = String(value?.action || '').toLowerCase();
   if (!ALLOWED_ACTIONS.has(action)) {
     throw new Error(`Unsupported action "${action}"`);

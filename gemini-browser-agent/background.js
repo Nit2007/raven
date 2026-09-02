@@ -1,15 +1,26 @@
 import { GeminiClient } from './gemini-client.js';
 
 const client = new GeminiClient();
-const MAX_ITERATIONS = 25;
-const STEP_DELAY_MS = 400;
-const MAX_STEP_RETRIES = 3;
 
 // Prevent duplicate loops running on the same tab in the same service worker instance
 const activeLoops = new Set();
 // In-memory buffer for redacted screenshots (tabId -> base64 dataUrl) to avoid storage quota bloat
 const pendingScreenshots = new Map();
 let lastCaptureTime = 0;
+
+// --- Config Wrapper ---
+async function getAgentConfig() {
+  const { maxIterations, stepDelayMs, maxStepRetries } = await chrome.storage.local.get([
+    'maxIterations',
+    'stepDelayMs',
+    'maxStepRetries'
+  ]);
+  return {
+    maxIterations: Number.isInteger(maxIterations) && maxIterations > 0 ? maxIterations : 25,
+    stepDelayMs: Number.isInteger(stepDelayMs) && stepDelayMs >= 0 ? stepDelayMs : 400,
+    maxStepRetries: Number.isInteger(maxStepRetries) && maxStepRetries > 0 ? maxStepRetries : 3
+  };
+}
 
 // --- Storage Wrappers ---
 async function getTaskState(tabId) {
@@ -37,6 +48,15 @@ async function handleMessage(msg) {
       return stopTask(msg.tabId);
     case 'GET_STATUS':
       return { ok: true, status: await getTaskState(msg.tabId) };
+    case 'TEST_API_KEY': {
+      const { key, model, baseUrl } = msg;
+      try {
+        await client.testApiKey(key, model, baseUrl);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
     default:
       return { ok: false, error: `Unknown message type: ${msg.type}` };
   }
@@ -89,6 +109,11 @@ async function runLoop(tabId) {
   activeLoops.add(tabId);
 
   try {
+    const config = await getAgentConfig();
+    const MAX_ITERATIONS = config.maxIterations;
+    const STEP_DELAY_MS = config.stepDelayMs;
+    const MAX_STEP_RETRIES = config.maxStepRetries;
+
     let state = await getTaskState(tabId);
     if (!state) return;
 

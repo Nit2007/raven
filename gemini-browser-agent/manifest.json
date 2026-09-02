@@ -3,7 +3,13 @@
   "name": "Gemini Browser Agent",
   "version": "0.1.0",
   "description": "Task-driven browser automation agent. Reads the DOM, asks Gemini for one next action, executes it, and repeats until the task is done.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",
     "<all_urls>"
@@ -16,6 +22,16 @@
     "default_popup": "popup.html"
   },
   "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "vendor/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   }

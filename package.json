@@ -1,0 +1,28 @@
+{
+  "name": "gemini-browser-agent",
+  "version": "0.1.0",
+  "description": "Task-driven autonomous browser automation Chrome extension powered by Gemini",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node dist/test/element-matcher.test.js",
+    "benchmark": "tsc && node dist/benchmark/benchmark-harness.js",
+    "start": "node scripts/launch-browser.js",
+    "start:edge": "node scripts/launch-browser.js --browser=edge",
+    "build:zip": "node scripts/build-zip.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "browser-agent",
+    "gemini",
+    "ai-agent",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}
