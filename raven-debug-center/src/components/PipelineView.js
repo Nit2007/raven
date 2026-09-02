@@ -190,7 +190,100 @@ export function renderPipelineView(container) {
               `;
             }
 
-            // Other Milestones (M2–M6) standard cards
+            if (m.id === 'M2') {
+              const dom = state.dom;
+              const det = m.details || {};
+              const cycleId = det.perceptionCycleId || dom.perceptionCycleId || '—';
+              const totalElements = dom.totalElements || det.counts?.total || 0;
+              const interactive = dom.interactiveElements || det.counts?.interactive || 0;
+              const visible = dom.visibleElements || det.counts?.visible || 0;
+              const editable = dom.editableElements || det.counts?.editable || 0;
+              const occluded = dom.occludedElements || det.counts?.occluded || 0;
+              const latency = m.executionTimeMs || det.latencyMs || 0;
+              const ts = m.lastUpdated || det.timestamp ? new Date(m.lastUpdated || det.timestamp).toLocaleTimeString() : '—';
+
+              return `
+                <div class="milestone-card status-${m.status}" id="card-M2">
+                  <div class="milestone-header">
+                    <div class="milestone-title-group">
+                      <span class="milestone-code">M2</span>
+                      <span class="milestone-name">M2 — Semantic DOM Perception & Spatial Analysis</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <button class="btn-cyber btn-cyber-primary" id="m2-trigger-btn" style="padding: 4px 10px; font-size: 11.5px;" title="Trigger live DOM analysis">
+                        <span>⚡</span>
+                        <span>Analyze Now</span>
+                      </button>
+                      <span class="badge-pill ${statusBadgeClass}">${m.status.toUpperCase()}</span>
+                    </div>
+                  </div>
+
+                  <!-- Real M2 Status Field Grid -->
+                  <div class="m1-status-grid" style="margin-top: 12px;">
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">STATUS</span>
+                      <span class="m1-grid-val ${m.status === 'success' ? 'emerald' : m.status === 'error' ? 'red' : ''}">${m.status.toUpperCase()}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">PERCEPTION CYCLE</span>
+                      <span class="m1-grid-val" style="font-size: 11px; font-family: var(--font-mono);">${cycleId}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">TOTAL ELEMENTS</span>
+                      <span class="m1-grid-val">${totalElements}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">INTERACTIVE</span>
+                      <span class="m1-grid-val cyan">${interactive}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">VISIBLE</span>
+                      <span class="m1-grid-val emerald">${visible}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">EDITABLE</span>
+                      <span class="m1-grid-val" style="color: #f59e0b;">${editable}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">OCCLUDED</span>
+                      <span class="m1-grid-val" style="color: #ef4444;">${occluded}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">ANALYSIS LATENCY</span>
+                      <span class="m1-grid-val violet">${latency} ms</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">TIMESTAMP</span>
+                      <span class="m1-grid-val" style="font-size: 11px;">${ts}</span>
+                    </div>
+                  </div>
+
+                  ${m.status === 'error' && det.error ? `
+                    <div style="margin-top: 12px; padding: 10px; border-radius: var(--radius-sm); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 12px; font-family: var(--font-mono);">
+                      <strong>Error:</strong> ${det.error}
+                    </div>
+                  ` : ''}
+
+                  ${isExpanded ? `
+                    <div class="milestone-details-drawer" style="margin-top: 10px;">
+                      <div style="font-weight: 600; margin-bottom: 4px; color: var(--text-cyan);">M2 Telemetry Payload:</div>
+                      <pre style="margin: 0; white-space: pre-wrap; word-break: break-all;">${JSON.stringify(det, null, 2)}</pre>
+                    </div>
+                  ` : ''}
+
+                  <div class="milestone-footer" style="margin-top: 12px;">
+                    <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">
+                      ${m.summary || 'Awaiting DOM analysis.'}
+                    </span>
+                    <button class="milestone-toggle-btn" data-toggle="M2">
+                      ${isExpanded ? 'Hide Details ▲' : 'Inspect Details ▼'}
+                    </button>
+                  </div>
+                </div>
+              `;
+            }
+
+            // Other Milestones (M3–M6) standard cards
             return `
               <div class="milestone-card status-${m.status}" id="card-${m.id}">
                 <div class="milestone-header">
@@ -266,6 +359,10 @@ export function renderPipelineView(container) {
 
     container.querySelector('#m1-trigger-btn')?.addEventListener('click', () => {
       window.postMessage({ type: 'RAVEN_TRIGGER_M1' }, '*');
+    });
+
+    container.querySelector('#m2-trigger-btn')?.addEventListener('click', () => {
+      window.postMessage({ type: 'RAVEN_TRIGGER_M2' }, '*');
     });
   }
 

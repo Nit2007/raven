@@ -17,6 +17,8 @@
   window.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'RAVEN_TRIGGER_M1') {
       chrome.runtime.sendMessage({ type: 'TRIGGER_M1' });
+    } else if (event.data && event.data.type === 'RAVEN_TRIGGER_M2') {
+      chrome.runtime.sendMessage({ type: 'TRIGGER_M2' });
     }
   });
 })();

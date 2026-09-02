@@ -174,12 +174,20 @@ class TelemetryReceiver {
           details: data.details || null
         });
         store.updateDomData({
-          totalElements: data.totalElements || 0,
-          interactiveElements: data.interactiveElements || 0,
-          visibleElements: data.visibleElements || 0,
-          roles: data.roles || {},
+          status: data.status || MILESTONE_STATUS.SUCCESS,
+          perceptionCycleId: data.details?.perceptionCycleId || null,
+          latencyMs: data.executionTimeMs || 0,
+          totalElements: data.totalElements || data.details?.counts?.total || 0,
+          interactiveElements: data.interactiveElements || data.details?.counts?.interactive || 0,
+          visibleElements: data.visibleElements || data.details?.counts?.visible || 0,
+          editableElements: data.details?.counts?.editable || 0,
+          occludedElements: data.details?.counts?.occluded || 0,
+          roles: data.roles || data.details?.roles || {},
           tree: data.tree || [],
-          rawSummary: data.rawSummary || null
+          elements: data.tree || [],
+          viewport: data.details?.viewport || null,
+          error: data.details?.error || null,
+          rawSummary: data.summary || null
         });
         break;
 

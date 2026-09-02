@@ -1,5 +1,6 @@
 import { GeminiClient } from './gemini-client.js';
 import { captureViewportM1 } from './m1-capture.js';
+import { runM2DomAnalysis } from './m2-dom.js';
 
 const client = new GeminiClient();
 const MAX_ITERATIONS = 25;
@@ -42,6 +43,16 @@ async function handleMessage(msg) {
         } catch (_) {}
       }
       return captureViewportM1(tabId);
+    }
+    case 'TRIGGER_M2': {
+      let tabId = msg.tabId;
+      if (!tabId) {
+        try {
+          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          tabId = activeTab?.id;
+        } catch (_) {}
+      }
+      return runM2DomAnalysis(tabId);
     }
     case 'GET_STATUS':
       return { ok: true, status: await getTaskState(msg.tabId) };
@@ -92,6 +103,13 @@ async function runLoop(tabId) {
         await captureViewportM1(tabId, { iteration: state.iteration });
       } catch (m1Err) {
         console.warn('[M1 Capture] Non-fatal capture failure during loop:', m1Err);
+      }
+
+      // Milestone M2: Semantic DOM Perception & Spatial Analysis (local only, never sent to Gemini)
+      try {
+        await runM2DomAnalysis(tabId, { iteration: state.iteration });
+      } catch (m2Err) {
+        console.warn('[M2 DOM] Non-fatal DOM analysis error during loop:', m2Err);
       }
 
       let stepSucceeded = false;

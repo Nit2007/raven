@@ -8,6 +8,8 @@ const m1Btn = document.getElementById('m1Btn');
 
 let activeTabId = null;
 
+const m2Btn = document.getElementById('m2Btn');
+
 m1Btn?.addEventListener('click', async () => {
   activeTabId = await getActiveTabId();
   if (activeTabId == null) return;
@@ -21,6 +23,23 @@ m1Btn?.addEventListener('click', async () => {
     } else {
       const v = res.data?.viewport;
       statusEl.textContent = `M1 Viewport: ${v?.width}×${v?.height} (${v?.ratio || v?.aspectRatio}) — ${res.data?.latencyMs}ms`;
+    }
+  });
+});
+
+m2Btn?.addEventListener('click', async () => {
+  activeTabId = await getActiveTabId();
+  if (activeTabId == null) return;
+  m2Btn.disabled = true;
+  m2Btn.textContent = 'Analyzing...';
+  chrome.runtime.sendMessage({ type: 'TRIGGER_M2', tabId: activeTabId }, (res) => {
+    m2Btn.disabled = false;
+    m2Btn.textContent = 'Analyze M2';
+    if (!res?.ok) {
+      statusEl.textContent = `M2 Error: ${res?.error || 'Analysis failed'}`;
+    } else {
+      const c = res.data?.counts;
+      statusEl.textContent = `M2 DOM: ${c?.total} elements (${c?.interactive} interactive, ${c?.visible} visible) — ${res.data?.latencyMs}ms`;
     }
   });
 });
