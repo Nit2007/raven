@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Gemini Browser Agent",
+  "name": "Raven",
   "version": "0.1.0",
   "description": "Task-driven browser automation agent. Reads the DOM, asks Gemini for one next action, executes it, and repeats until the task is done.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
@@ -15,5 +15,12 @@
   "action": {
     "default_popup": "popup.html"
   },
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
+      "js": ["debug-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
 }

@@ -4,8 +4,26 @@ const stopBtn = document.getElementById('stopBtn');
 const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const optionsLink = document.getElementById('optionsLink');
+const m1Btn = document.getElementById('m1Btn');
 
 let activeTabId = null;
+
+m1Btn?.addEventListener('click', async () => {
+  activeTabId = await getActiveTabId();
+  if (activeTabId == null) return;
+  m1Btn.disabled = true;
+  m1Btn.textContent = 'Capturing...';
+  chrome.runtime.sendMessage({ type: 'TRIGGER_M1', tabId: activeTabId }, (res) => {
+    m1Btn.disabled = false;
+    m1Btn.textContent = 'Capture M1';
+    if (!res?.ok) {
+      statusEl.textContent = `M1 Error: ${res?.error || 'Capture failed'}`;
+    } else {
+      const v = res.data?.viewport;
+      statusEl.textContent = `M1 Viewport: ${v?.width}×${v?.height} (${v?.ratio || v?.aspectRatio}) — ${res.data?.latencyMs}ms`;
+    }
+  });
+});
 
 optionsLink.addEventListener('click', (e) => {
   e.preventDefault();

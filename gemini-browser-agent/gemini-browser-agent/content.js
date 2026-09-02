@@ -150,6 +150,21 @@
   function onMessage(msg, sender, sendResponse) {
     (async () => {
       try {
+        if (msg.type === 'GET_VIEWPORT_METRICS') {
+          sendResponse({
+            ok: true,
+            data: {
+              cssWidth: window.innerWidth,
+              cssHeight: window.innerHeight,
+              devicePixelRatio: window.devicePixelRatio || 1,
+              screenWidth: window.screen ? window.screen.width : null,
+              screenHeight: window.screen ? window.screen.height : null,
+              url: location.href,
+              title: document.title
+            }
+          });
+          return;
+        }
         if (msg.type === 'GET_OBSERVATION') {
           sendResponse({
             ok: true,

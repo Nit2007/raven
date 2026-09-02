@@ -1,4 +1,5 @@
 import { GeminiClient } from './gemini-client.js';
+import { captureViewportM1 } from './m1-capture.js';
 
 const client = new GeminiClient();
 const MAX_ITERATIONS = 25;
@@ -32,6 +33,16 @@ async function handleMessage(msg) {
       return startTask(msg.tabId, msg.task);
     case 'STOP_TASK':
       return stopTask(msg.tabId);
+    case 'TRIGGER_M1': {
+      let tabId = msg.tabId;
+      if (!tabId) {
+        try {
+          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          tabId = activeTab?.id;
+        } catch (_) {}
+      }
+      return captureViewportM1(tabId);
+    }
     case 'GET_STATUS':
       return { ok: true, status: await getTaskState(msg.tabId) };
     default:
@@ -75,6 +86,13 @@ async function runLoop(tabId) {
     while (!state.stopped && state.iteration < MAX_ITERATIONS && state.status === 'running') {
       state.iteration += 1;
       await setTaskState(tabId, state);
+
+      // Milestone M1: Real Viewport / Screenshot Capture (local only, never sent to Gemini)
+      try {
+        await captureViewportM1(tabId, { iteration: state.iteration });
+      } catch (m1Err) {
+        console.warn('[M1 Capture] Non-fatal capture failure during loop:', m1Err);
+      }
 
       let stepSucceeded = false;
       let lastErr = '';
