@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAVEN Debug Center — Browser Agent Observability</title>
+    <meta name="description" content="Development, observability, and debugging dashboard for RAVEN autonomous browser agent milestones M1-M6, Privacy Gate, Simple-UI, and Gemini." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/styles/base.css" />
+    <link rel="stylesheet" href="/src/styles/layout.css" />
+    <link rel="stylesheet" href="/src/styles/pipeline.css" />
+    <link rel="stylesheet" href="/src/styles/panels.css" />
+    <link rel="stylesheet" href="/src/styles/timeline.css" />
+  </head>
+  <body>
+    <div id="app" class="app-root">
+      <!-- Header is mounted dynamically -->
+      <header id="app-header"></header>
+
+      <!-- Navigation Tabs -->
+      <nav id="app-nav" class="nav-bar">
+        <div class="nav-container">
+          <button class="nav-tab active" data-view="overview">
+            <span class="tab-icon">⚡</span>
+            <span class="tab-label">Overview</span>
+          </button>
+          <button class="nav-tab" data-view="pipeline">
+            <span class="tab-icon">🔄</span>
+            <span class="tab-label">Pipeline (M1–M6)</span>
+          </button>
+          <button class="nav-tab" data-view="browser">
+            <span class="tab-icon">🌐</span>
+            <span class="tab-label">Live Browser</span>
+          </button>
+          <button class="nav-tab" data-view="dom">
+            <span class="tab-icon">🌳</span>
+            <span class="tab-label">DOM Analysis</span>
+          </button>
+          <button class="nav-tab" data-view="vision">
+            <span class="tab-icon">👁️</span>
+            <span class="tab-label">Vision</span>
+          </button>
+          <button class="nav-tab" data-view="ocr">
+            <span class="tab-icon">🔤</span>
+            <span class="tab-label">OCR</span>
+          </button>
+          <button class="nav-tab" data-view="privacy">
+            <span class="tab-icon">🛡️</span>
+            <span class="tab-label">Privacy / PII</span>
+          </button>
+          <button class="nav-tab" data-view="sanitization">
+            <span class="tab-icon">🔒</span>
+            <span class="tab-label">Sanitization</span>
+          </button>
+          <button class="nav-tab" data-view="agent">
+            <span class="tab-icon">🤖</span>
+            <span class="tab-label">Agent (Simple-UI/Gemini)</span>
+          </button>
+          <button class="nav-tab" data-view="timeline">
+            <span class="tab-icon">⏱️</span>
+            <span class="tab-label">Event Timeline</span>
+            <span id="event-count-badge" class="badge-pill">0</span>
+          </button>
+          <button class="nav-tab" data-view="health">
+            <span class="tab-icon">🩺</span>
+            <span class="tab-label">Health & Links</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Subheader Status Banner (Pipeline Flow Ribbon) -->
+      <section id="pipeline-ribbon-container" class="ribbon-section"></section>
+
+      <!-- Main View Container -->
+      <main id="main-content" class="main-viewport"></main>
+
+      <!-- Connection / Settings Modal -->
+      <div id="modal-container"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
