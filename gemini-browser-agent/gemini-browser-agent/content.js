@@ -1,16 +1,9 @@
-// content.js — injected on demand into the active tab when a task starts.
-// Two jobs: (1) snapshot the DOM into a compact observation, (2) execute a
-// single action the background worker hands back.
-//
-// PRIVACY NOTE FOR THIS PROJECT: extractVisibleText()/extractElements() below
-// are a bare-bones stand-in. Before this data leaves the page for the Gemini
-// API, wire in the real dom-analyzer.js / sensitivity-detector.js /
-// redaction-engine.js / sanitizer.js pipeline so PII on the page doesn't get
-// sent to a third-party API unredacted.
-
+// content.js — DOM Observer & Action Executor
 (function () {
-  if (window.__geminiAgentInitialized) return;
-  window.__geminiAgentInitialized = true;
+  // Clean up listener from previous injection so re-injection after navigation gets a fresh handler
+  if (window.__geminiAgentListener) {
+    chrome.runtime.onMessage.removeListener(window.__geminiAgentListener);
+  }
 
   const AGENT_ATTR = 'data-agent-id';
   let counter = 0;
@@ -33,20 +26,48 @@
   }
 
   function extractElements() {
-    const selector =
-      'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="tab"], [contenteditable="true"]';
+    const selector = [
+      'a[href]',
+      'button',
+      'input',
+      'select',
+      'textarea',
+      'summary',
+      '[role="button"]',
+      '[role="link"]',
+      '[role="checkbox"]',
+      '[role="tab"]',
+      '[role="searchbox"]',
+      '[role="menuitem"]',
+      '[role="option"]',
+      '[role="combobox"]',
+      '[contenteditable="true"]'
+    ].join(', ');
+
     const nodes = Array.from(document.querySelectorAll(selector));
     return nodes
       .filter(isVisible)
       .slice(0, 200)
-      .map((el) => ({
-        target_id: assignId(el),
-        tag: el.tagName.toLowerCase(),
-        type: el.getAttribute('type') || el.getAttribute('role') || '',
-        text: (el.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.value || '')
+      .map((el) => {
+        const text = (
+          el.innerText ||
+          el.getAttribute('aria-label') ||
+          el.getAttribute('placeholder') ||
+          el.getAttribute('title') ||
+          el.value ||
+          ''
+        )
           .trim()
-          .slice(0, 80)
-      }));
+          .replace(/\s+/g, ' ')
+          .slice(0, 80);
+
+        return {
+          target_id: assignId(el),
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute('type') || el.getAttribute('role') || '',
+          text: text
+        };
+      });
   }
 
   function extractVisibleText() {
@@ -54,7 +75,7 @@
     const chunks = [];
     let node;
     while ((node = walker.nextNode()) && chunks.length < 100) {
-      const t = node.textContent.trim();
+      const t = node.textContent.trim().replace(/\s+/g, ' ');
       if (t && t.length > 1) chunks.push(t.slice(0, 200));
     }
     return chunks.slice(0, 100);
@@ -70,7 +91,7 @@
     switch (action.action) {
       case 'click': {
         const el = findEl(action.target_id);
-        el.scrollIntoView({ block: 'center' });
+        el.scrollIntoView({ block: 'center', behavior: 'instant' });
         el.click();
         return;
       }
@@ -96,8 +117,21 @@
         const el = findEl(action.target_id);
         const keyMap = { ENTER: 'Enter', TAB: 'Tab', ESC: 'Escape', BACKSPACE: 'Backspace' };
         const key = keyMap[action.value] || action.value;
-        el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+        const keyCode = key === 'Enter' ? 13 : key === 'Tab' ? 9 : key === 'Escape' ? 27 : 0;
+
+        const opts = { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true };
+        el.dispatchEvent(new KeyboardEvent('keydown', opts));
+        el.dispatchEvent(new KeyboardEvent('keypress', opts));
+        el.dispatchEvent(new KeyboardEvent('keyup', opts));
+
+        // Form submission fallback for Enter press in search fields
+        if (key === 'Enter' && el.form) {
+          if (typeof el.form.requestSubmit === 'function') {
+            el.form.requestSubmit();
+          } else {
+            el.form.submit();
+          }
+        }
         return;
       }
       case 'scroll': {
@@ -113,7 +147,7 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  function onMessage(msg, sender, sendResponse) {
     (async () => {
       try {
         if (msg.type === 'GET_OBSERVATION') {
@@ -136,6 +170,9 @@
         sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
       }
     })();
-    return true; // async response
-  });
+    return true; // Keep message channel open for async response
+  }
+
+  window.__geminiAgentListener = onMessage;
+  chrome.runtime.onMessage.addListener(onMessage);
 })();

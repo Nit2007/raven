@@ -1,23 +1,29 @@
-// background.js — MV3 service worker.
-// Owns the loop: ask content script for the DOM -> ask Gemini for one action
-// -> tell content script to execute it -> repeat until "done", an error, or
-// MAX_ITERATIONS is hit. State is kept per-tab so multiple tabs could in
-// theory run tasks independently.
-
 import { GeminiClient } from './gemini-client.js';
 
 const client = new GeminiClient();
 const MAX_ITERATIONS = 25;
-const STEP_DELAY_MS = 400; // let the DOM settle before re-observing
+const STEP_DELAY_MS = 400;
+const MAX_STEP_RETRIES = 3;
 
-/** @type {Map<number, {task:string, history:object[], iteration:number, stopped:boolean, status:string, error?:string}>} */
-const tasks = new Map();
+// Prevent duplicate loops running on the same tab in the same service worker instance
+const activeLoops = new Set();
 
+// --- Storage Wrappers ---
+async function getTaskState(tabId) {
+  const res = await chrome.storage.local.get(`task_${tabId}`);
+  return res[`task_${tabId}`] || null;
+}
+
+async function setTaskState(tabId, state) {
+  await chrome.storage.local.set({ [`task_${tabId}`]: state });
+}
+
+// --- Message Handling ---
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handleMessage(msg, sender)
     .then(sendResponse)
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
-  return true; // keep the message channel open for the async response
+  return true; 
 });
 
 async function handleMessage(msg) {
@@ -27,87 +33,166 @@ async function handleMessage(msg) {
     case 'STOP_TASK':
       return stopTask(msg.tabId);
     case 'GET_STATUS':
-      return { ok: true, status: tasks.get(msg.tabId) || null };
+      return { ok: true, status: await getTaskState(msg.tabId) };
     default:
       return { ok: false, error: `Unknown message type: ${msg.type}` };
   }
 }
 
+// --- Task Lifecycle ---
 async function startTask(tabId, task) {
   if (!task || !task.trim()) return { ok: false, error: 'Task text is empty.' };
 
-  // Fresh inject each run — content.js guards itself against double-init.
   await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
 
-  tasks.set(tabId, { task: task.trim(), history: [], memory: [], iteration: 0, stopped: false, status: 'running' });
-  runLoop(tabId); // fire and forget — status is polled/pushed separately
+  const initialState = { task: task.trim(), history: [], memory: [], iteration: 0, stopped: false, status: 'running' };
+  await setTaskState(tabId, initialState);
+  
+  runLoop(tabId); 
   return { ok: true };
 }
 
 async function stopTask(tabId) {
-  const state = tasks.get(tabId);
+  const state = await getTaskState(tabId);
   if (state && state.status === 'running') {
     state.stopped = true;
     state.status = 'stopped';
-    notifyPopup(tabId);
+    await setTaskState(tabId, state);
+    await notifyPopup(tabId);
   }
   return { ok: true };
 }
 
+// --- The Core Loop (Auto-Resuming) ---
 async function runLoop(tabId) {
-  const state = tasks.get(tabId);
-  if (!state) return;
+  if (activeLoops.has(tabId)) return; 
+  activeLoops.add(tabId);
 
-  while (!state.stopped && state.iteration < MAX_ITERATIONS) {
-    state.iteration += 1;
+  try {
+    let state = await getTaskState(tabId);
+    if (!state) return;
 
-    let observation;
-    try {
-      observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
-    } catch (err) {
-      return fail(tabId, `Could not read page: ${messageOf(err)}`);
+    while (!state.stopped && state.iteration < MAX_ITERATIONS && state.status === 'running') {
+      state.iteration += 1;
+      await setTaskState(tabId, state);
+
+      let stepSucceeded = false;
+      let lastErr = '';
+
+      for (let attempt = 1; attempt <= MAX_STEP_RETRIES; attempt++) {
+        try {
+          let observation;
+          try {
+            observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+          } catch (_obsErr) {
+            await waitForTabLoad(tabId);
+            await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+            await sleep(500);
+            observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+          }
+
+          const action = await client.chooseNextAction(
+            state.task,
+            { ...observation, actionHistory: state.history, memory: state.memory }
+          );
+
+          if (action.memory) state.memory.push(action.memory);
+          delete action.memory;
+          state.history.push(action);
+          
+          await setTaskState(tabId, state);
+          await notifyPopup(tabId);
+
+          if (action.action === 'done') {
+            state.status = 'done';
+            await setTaskState(tabId, state);
+            await notifyPopup(tabId);
+            return;
+          }
+
+          await sendToContent(tabId, { type: 'EXECUTE_ACTION', action });
+          stepSucceeded = true;
+          break;
+        } catch (err) {
+          lastErr = messageOf(err);
+          if (attempt < MAX_STEP_RETRIES) await sleep(1000);
+        }
+      }
+
+      if (!stepSucceeded) {
+        await fail(tabId, `Step ${state.iteration} failed after ${MAX_STEP_RETRIES} retries: ${lastErr}`);
+        return;
+      }
+      
+      await sleep(STEP_DELAY_MS);
+      
+      // Refresh state from storage in case the user clicked Stop during the sleep
+      state = await getTaskState(tabId);
+      if (!state) return;
     }
 
-    let action;
-    try {
-      action = await client.chooseNextAction(state.task, { ...observation, actionHistory: state.history, memory: state.memory });
-    } catch (err) {
-      return fail(tabId, messageOf(err));
+    if (!state.stopped && state.status === 'running') {
+      state.status = 'max_iterations';
+      await setTaskState(tabId, state);
+      await notifyPopup(tabId);
     }
-
-    if (action.memory) state.memory.push(action.memory);
-    const memoryNote = action.memory; // keep for logs if needed
-    delete action.memory; // history stays clean — just the mechanical action
-    state.history.push(action);
-    notifyPopup(tabId);
-
-    if (action.action === 'done') {
-      state.status = 'done';
-      notifyPopup(tabId);
-      return;
-    }
-
-    try {
-      await sendToContent(tabId, { type: 'EXECUTE_ACTION', action });
-    } catch (err) {
-      return fail(tabId, `Action execution failed: ${messageOf(err)}`);
-    }
-
-    await sleep(STEP_DELAY_MS);
-  }
-
-  if (!state.stopped && state.status === 'running') {
-    state.status = 'max_iterations';
-    notifyPopup(tabId);
+  } finally {
+    activeLoops.delete(tabId);
   }
 }
 
-function fail(tabId, error) {
-  const state = tasks.get(tabId);
+// --- Auto-Resume Hooks ---
+
+// 1. Wake up loop if the browser navigates to a new page
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+  if (details.frameId !== 0) return; // Ignore iframe loads
+  const tabId = details.tabId;
+  const state = await getTaskState(tabId);
+  
+  if (state && state.status === 'running' && !state.stopped) {
+    await sleep(500);
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    } catch(e) {
+      console.warn("Auto-reinject skipped/failed:", e);
+    }
+    if (!activeLoops.has(tabId)) runLoop(tabId);
+  }
+});
+
+// 2. Wake up loop if the Service Worker restarts
+chrome.runtime.onStartup.addListener(resumeAllActiveTasks);
+chrome.runtime.onInstalled.addListener(resumeAllActiveTasks);
+
+async function resumeAllActiveTasks() {
+  const all = await chrome.storage.local.get(null);
+  for (const [key, state] of Object.entries(all)) {
+    if (key.startsWith('task_') && state.status === 'running' && !state.stopped) {
+      const tabId = parseInt(key.replace('task_', ''), 10);
+      if (!activeLoops.has(tabId)) runLoop(tabId);
+    }
+  }
+}
+
+// --- Utilities ---
+async function waitForTabLoad(tabId, timeoutMs = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.status === 'complete') return;
+    } catch(e) { return; } // Tab closed
+    await sleep(500);
+  }
+}
+
+async function fail(tabId, error) {
+  const state = await getTaskState(tabId);
   if (!state) return;
   state.status = 'error';
   state.error = error;
-  notifyPopup(tabId);
+  await setTaskState(tabId, state);
+  await notifyPopup(tabId);
 }
 
 function sendToContent(tabId, message) {
@@ -126,11 +211,9 @@ function sendToContent(tabId, message) {
   });
 }
 
-function notifyPopup(tabId) {
-  const state = tasks.get(tabId);
-  chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', tabId, state }).catch(() => {
-    // No popup open to receive it — fine, it'll pull GET_STATUS when opened.
-  });
+async function notifyPopup(tabId) {
+  const state = await getTaskState(tabId);
+  chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', tabId, state }).catch(() => {});
 }
 
 function sleep(ms) {
