@@ -40,7 +40,15 @@ function render(state) {
   logEl.innerHTML = '';
   (state.history || []).forEach((a, i) => {
     const li = document.createElement('li');
-    li.textContent = `${a.action}${a.target_id ? ' → ' + a.target_id : ''}${a.value ? ' = "' + a.value + '"' : ''}`;
+    if (a.action === 'look') {
+      const faces = a.facesRedacted ?? 0;
+      const texts = a.textRegionsRedacted ?? 0;
+      li.textContent = `👁 looked at screen — ${faces} face${faces === 1 ? '' : 's'}, ${texts} text region${texts === 1 ? '' : 's'} redacted`;
+    } else if (a.action === 'navigate') {
+      li.textContent = `🌐 navigate → ${a.url}`;
+    } else {
+      li.textContent = `${a.action}${a.target_id ? ' → ' + a.target_id : ''}${a.value ? ' = "' + a.value + '"' : ''}`;
+    }
     logEl.appendChild(li);
   });
 }

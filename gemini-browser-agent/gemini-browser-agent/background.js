@@ -7,6 +7,9 @@ const MAX_STEP_RETRIES = 3;
 
 // Prevent duplicate loops running on the same tab in the same service worker instance
 const activeLoops = new Set();
+// In-memory buffer for redacted screenshots (tabId -> base64 dataUrl) to avoid storage quota bloat
+const pendingScreenshots = new Map();
+let lastCaptureTime = 0;
 
 // --- Storage Wrappers ---
 async function getTaskState(tabId) {
@@ -23,7 +26,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handleMessage(msg, sender)
     .then(sendResponse)
     .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
-  return true; 
+  return true;
 });
 
 async function handleMessage(msg) {
@@ -39,20 +42,37 @@ async function handleMessage(msg) {
   }
 }
 
+function isRestrictedUrl(url) {
+  if (!url) return false;
+  return url.startsWith('chrome://') ||
+         url.startsWith('chrome-extension://') ||
+         url.startsWith('edge://') ||
+         url.startsWith('about:') ||
+         url.startsWith('view-source:');
+}
+
 // --- Task Lifecycle ---
 async function startTask(tabId, task) {
   if (!task || !task.trim()) return { ok: false, error: 'Task text is empty.' };
 
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!isRestrictedUrl(tab?.url)) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    } catch (_e) {
+      // Content script injection can fail on restricted or loading pages; will retry in loop
+    }
+  }
 
   const initialState = { task: task.trim(), history: [], memory: [], iteration: 0, stopped: false, status: 'running' };
   await setTaskState(tabId, initialState);
-  
-  runLoop(tabId); 
+
+  runLoop(tabId);
   return { ok: true };
 }
 
 async function stopTask(tabId) {
+  pendingScreenshots.delete(tabId);
   const state = await getTaskState(tabId);
   if (state && state.status === 'running') {
     state.stopped = true;
@@ -65,7 +85,7 @@ async function stopTask(tabId) {
 
 // --- The Core Loop (Auto-Resuming) ---
 async function runLoop(tabId) {
-  if (activeLoops.has(tabId)) return; 
+  if (activeLoops.has(tabId)) return;
   activeLoops.add(tabId);
 
   try {
@@ -82,33 +102,128 @@ async function runLoop(tabId) {
       for (let attempt = 1; attempt <= MAX_STEP_RETRIES; attempt++) {
         try {
           let observation;
-          try {
-            observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
-          } catch (_obsErr) {
-            await waitForTabLoad(tabId);
-            await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-            await sleep(500);
-            observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+          const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+
+          if (isRestrictedUrl(currentTab?.url)) {
+            observation = {
+              url: currentTab?.url || 'chrome://newtab',
+              title: currentTab?.title || 'New Tab',
+              elements: [],
+              visibleText: []
+            };
+          } else {
+            try {
+              observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+            } catch (_obsErr) {
+              await waitForTabLoad(tabId);
+              try {
+                await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+                await sleep(500);
+                observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+              } catch (_injErr) {
+                observation = {
+                  url: currentTab?.url || 'about:blank',
+                  title: currentTab?.title || 'Untitled',
+                  elements: [],
+                  visibleText: []
+                };
+              }
+            }
+          }
+
+          // Flag sparse observation (< 3 elements) as strong signal to consider 'look'
+          if (observation && Array.isArray(observation.elements) && observation.elements.length < 3) {
+            observation.observationWasSparse = true;
+          }
+
+          // Check if a redacted screenshot is pending from a previous 'look' step
+          let screenshot = null;
+          if (pendingScreenshots.has(tabId)) {
+            screenshot = pendingScreenshots.get(tabId);
+            pendingScreenshots.delete(tabId); // Consume immediately so only attached for this single step
           }
 
           const action = await client.chooseNextAction(
             state.task,
-            { ...observation, actionHistory: state.history, memory: state.memory }
+            { ...observation, actionHistory: state.history, memory: state.memory, screenshot }
           );
 
           if (action.memory) state.memory.push(action.memory);
           delete action.memory;
-          state.history.push(action);
-          
-          await setTaskState(tabId, state);
-          await notifyPopup(tabId);
 
           if (action.action === 'done') {
+            state.history.push(action);
             state.status = 'done';
             await setTaskState(tabId, state);
             await notifyPopup(tabId);
             return;
           }
+
+          if (action.action === 'look') {
+            // 1. Verify tab is active before capture (prevent screenshotting wrong tab if user switched)
+            const tab = await chrome.tabs.get(tabId);
+            if (!tab.active) {
+              await chrome.tabs.update(tabId, { active: true });
+              await sleep(250);
+            }
+
+            // 2. Enforce capture rate limit (~2 calls/sec max in Chrome)
+            const now = Date.now();
+            const elapsed = now - lastCaptureTime;
+            if (elapsed < 600) {
+              await sleep(600 - elapsed);
+            }
+            lastCaptureTime = Date.now();
+
+            // 3. Capture visible tab
+            const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
+
+            // 4. Query text PII bounds from page
+            let piiBounds = [];
+            try {
+              const piiRes = await sendToContent(tabId, { type: 'GET_PII_BOUNDS' });
+              if (piiRes && Array.isArray(piiRes.bounds)) {
+                piiBounds = piiRes.bounds;
+              }
+            } catch (_e) {}
+
+            // 5. Lazy-import on-device face & text redaction
+            const { redactScreenshot } = await import('./vision-redact.js');
+            const redactResult = await redactScreenshot(rawDataUrl, piiBounds);
+
+            // 6. Store redacted screenshot in memory for the very next iteration only
+            pendingScreenshots.set(tabId, redactResult.dataUrl);
+
+            action.facesRedacted = redactResult.facesRedacted;
+            action.textRegionsRedacted = redactResult.textRegionsRedacted;
+            state.history.push(action);
+
+            await setTaskState(tabId, state);
+            await notifyPopup(tabId);
+
+            stepSucceeded = true;
+            break;
+          }
+
+          if (action.action === 'navigate') {
+            state.history.push(action);
+            await setTaskState(tabId, state);
+            await notifyPopup(tabId);
+
+            await chrome.tabs.update(tabId, { url: action.url });
+            await waitForTabLoad(tabId);
+            await sleep(600);
+            try {
+              await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+            } catch (_e) {}
+
+            stepSucceeded = true;
+            break;
+          }
+
+          state.history.push(action);
+          await setTaskState(tabId, state);
+          await notifyPopup(tabId);
 
           await sendToContent(tabId, { type: 'EXECUTE_ACTION', action });
           stepSucceeded = true;
@@ -123,9 +238,9 @@ async function runLoop(tabId) {
         await fail(tabId, `Step ${state.iteration} failed after ${MAX_STEP_RETRIES} retries: ${lastErr}`);
         return;
       }
-      
+
       await sleep(STEP_DELAY_MS);
-      
+
       // Refresh state from storage in case the user clicked Stop during the sleep
       state = await getTaskState(tabId);
       if (!state) return;
@@ -138,6 +253,7 @@ async function runLoop(tabId) {
     }
   } finally {
     activeLoops.delete(tabId);
+    pendingScreenshots.delete(tabId);
   }
 }
 
@@ -148,12 +264,12 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
   if (details.frameId !== 0) return; // Ignore iframe loads
   const tabId = details.tabId;
   const state = await getTaskState(tabId);
-  
+
   if (state && state.status === 'running' && !state.stopped) {
     await sleep(500);
     try {
       await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-    } catch(e) {
+    } catch (e) {
       console.warn("Auto-reinject skipped/failed:", e);
     }
     if (!activeLoops.has(tabId)) runLoop(tabId);
@@ -181,7 +297,7 @@ async function waitForTabLoad(tabId, timeoutMs = 10000) {
     try {
       const tab = await chrome.tabs.get(tabId);
       if (tab.status === 'complete') return;
-    } catch(e) { return; } // Tab closed
+    } catch (e) { return; } // Tab closed
     await sleep(500);
   }
 }
@@ -213,7 +329,7 @@ function sendToContent(tabId, message) {
 
 async function notifyPopup(tabId) {
   const state = await getTaskState(tabId);
-  chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', tabId, state }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', tabId, state }).catch(() => { });
 }
 
 function sleep(ms) {
