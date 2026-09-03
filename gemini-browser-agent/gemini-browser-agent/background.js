@@ -164,6 +164,23 @@ async function runLoop(tabId) {
           // Generate prompt-safe structured memory block
           const treeMemoryContext = treeMemory.getPromptContext(observation);
 
+          // DETECT BRUTE-FORCE LOOP: Check if we've tried too many actions at this state without progress
+          const currentNode = treeMemory.nodes[observation.pageHash];
+          const triedActions = currentNode?.triedActions || [];
+          const failedActions = triedActions.filter(t => !t.resultedInStateChange);
+          
+          // Track global loop iterations across all states
+          treeMemory.totalLoopIterations = (treeMemory.totalLoopIterations || 0) + 1;
+          
+          // If 5+ actions failed at this state OR 20+ total iterations without completion, force early termination
+          if (failedActions.length >= 5 || treeMemory.totalLoopIterations >= 20) {
+            state.status = 'error';
+            state.error = `Loop detected: ${failedActions.length} failed actions at this state (total iterations: ${treeMemory.totalLoopIterations}). Task may be complete or impossible. Try a different approach.`;
+            await setTaskState(tabId, state);
+            await notifyPopup(tabId);
+            return;
+          }
+
           // Update treeMemory in task state
           state.treeMemory = treeMemory.toJSON();
 

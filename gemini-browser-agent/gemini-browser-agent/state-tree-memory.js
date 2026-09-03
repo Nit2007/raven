@@ -11,12 +11,14 @@ export class StateTreeMemory {
   constructor(data = {}) {
     this.rootHash = data.rootHash || null;
     this.currentHash = data.currentHash || null;
-    // Map of pageHash -> Node { hash, url, title, visitCount, depth, parentHash, prunedActions: [] }
+    // Map of pageHash -> Node { hash, url, title, visitCount, depth, parentHash, prunedActions: [], triedActions: [] }
     this.nodes = data.nodes || {};
     // List of transitions: [ { from, to, actionSignature, targetId, elementLabel, outcome, timestamp } ]
     this.edges = data.edges || [];
     // Active breadcrumb stack of state hashes: [rootHash, ..., currentHash]
     this.trajectory = data.trajectory || [];
+    // Global loop detection counter - track total retries across all states
+    this.totalLoopIterations = data.totalLoopIterations || 0;
   }
 
   /**
@@ -98,6 +100,7 @@ export class StateTreeMemory {
 
     const actionSig = StateTreeMemory.getActionSignature(action, element);
     const targetId = action.target_id || '';
+    const actionType = action.action || 'unknown';
     const isSelfLoop = fromHash === toHash;
     const outcome = isSelfLoop ? 'cyclic_loop' : 'transition';
 
@@ -105,7 +108,7 @@ export class StateTreeMemory {
       from: fromHash,
       to: toHash,
       actionSignature: actionSig,
-      actionType: action.action,
+      actionType,
       targetId,
       elementTag: element?.tag || '',
       elementText: element?.text || '',
@@ -115,9 +118,7 @@ export class StateTreeMemory {
 
     this.edges.push(edge);
 
-    // DETERMINISTIC PRUNING RULE:
-    // If the action produced no state change (self loop) or is an identical repeated action,
-    // blacklist/prune this action at the originating node.
+    // DETERMINISTIC PRUNING RULE #1: Self-loop produces no state change
     if (isSelfLoop && this.nodes[fromHash]) {
       const fromNode = this.nodes[fromHash];
       const alreadyPruned = fromNode.prunedActions.some(
@@ -128,9 +129,32 @@ export class StateTreeMemory {
         fromNode.prunedActions.push({
           actionSignature: actionSig,
           targetId,
-          actionType: action.action,
+          actionType,
           elementText: element?.text || '',
-          reason: 'CYCLIC_LOOP: Action produced 0 state change on page DOM'
+          reason: 'CYCLIC_LOOP: Action produced 0 state change on page DOM',
+          severity: 'high'
+        });
+      }
+    }
+
+    // PRUNING RULE #2: Track ALL actions attempted at this state (even successful ones)
+    // This prevents trying the same element twice unless state changed significantly
+    if (this.nodes[fromHash]) {
+      const fromNode = this.nodes[fromHash];
+      if (!fromNode.triedActions) {
+        fromNode.triedActions = [];
+      }
+      const alreadyTried = fromNode.triedActions.some(
+        (t) => t.targetId === targetId && t.actionType === actionType
+      );
+      if (!alreadyTried) {
+        fromNode.triedActions.push({
+          actionType,
+          targetId,
+          elementText: element?.text || '',
+          actionSignature: actionSig,
+          timestamp: Date.now(),
+          resultedInStateChange: !isSelfLoop
         });
       }
     }
@@ -146,6 +170,16 @@ export class StateTreeMemory {
   getPrunedActionsForState(hash) {
     if (!hash || !this.nodes[hash]) return [];
     return this.nodes[hash].prunedActions || [];
+  }
+
+  /**
+   * Gets list of ALL tried actions at a given page state (for smarter loop detection)
+   * @param {string} hash
+   * @returns {Array}
+   */
+  getTriedActionsForState(hash) {
+    if (!hash || !this.nodes[hash]) return [];
+    return this.nodes[hash].triedActions || [];
   }
 
   /**
@@ -174,6 +208,7 @@ export class StateTreeMemory {
     const depth = currentNode ? currentNode.depth : 0;
     const totalUniqueNodes = Object.keys(this.nodes).length;
     const pruned = this.getPrunedActionsForState(hash);
+    const triedActions = this.getTriedActionsForState(hash);
 
     let prunedBlock = '  - None (All valid interactive elements at this state are candidate options).';
     if (pruned.length > 0) {
@@ -185,12 +220,28 @@ export class StateTreeMemory {
         .join('\n');
     }
 
+    // Build tried actions summary to show model what's already been attempted
+    let triedBlock = '';
+    if (triedActions.length > 0) {
+      const successfulActions = triedActions.filter(t => t.resultedInStateChange);
+      const failedActions = triedActions.filter(t => !t.resultedInStateChange);
+      
+      triedBlock = `\n- Actions Already Attempted at This State (${triedActions.length} total):`;
+      if (successfulActions.length > 0) {
+        triedBlock += `\n  * Successful (led to new state): ${successfulActions.map(s => `"${s.actionSignature}"`).join(', ')}`;
+      }
+      if (failedActions.length > 0) {
+        triedBlock += `\n  * Failed (no state change): ${failedActions.map(f => `"${f.actionSignature}"`).join(', ')}`;
+      }
+      triedBlock += `\n  STRATEGY: Do not repeat failed actions. If all elements have been tried, consider scrolling, using search, or marking task "done".`;
+    }
+
     return `HIERARCHICAL EXPLORATION TREE & STATE MEMORY:
 - Active Trajectory (Breadcrumbs): ${this.getBreadcrumbs()}
 - Current State Depth in Tree: ${depth} (Total unique states mapped: ${totalUniqueNodes})
 - Exact Visits to Current State Hash: ${visitCount}
 - DETERMINISTIC PRUNING CONSTRAINTS (Actions verified as dead-ends at this exact page state):
-${prunedBlock}`;
+${prunedBlock}${triedBlock}`;
   }
 
   /**
@@ -202,7 +253,8 @@ ${prunedBlock}`;
       currentHash: this.currentHash,
       nodes: this.nodes,
       edges: this.edges,
-      trajectory: this.trajectory
+      trajectory: this.trajectory,
+      totalLoopIterations: this.totalLoopIterations
     };
   }
 

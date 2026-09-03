@@ -85,6 +85,22 @@
     return (hash >>> 0).toString(16).padStart(8, '0');
   }
 
+  // Enhanced hash that also considers URL path for better state differentiation
+  function computePageHash(elements, url) {
+    const elementHash = computeSemanticHash(elements);
+    // Extract base path without query params for more stable hashing
+    const urlObj = new URL(url);
+    const basePath = urlObj.pathname;
+    const combined = `${basePath}|${elementHash}`;
+    
+    let hash = 5381;
+    for (let i = 0; i < combined.length; i++) {
+      hash = ((hash << 5) + hash) + combined.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
   function extractVisibleText() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const chunks = [];
@@ -488,7 +504,8 @@
         }
         if (msg.type === 'GET_OBSERVATION') {
           const elements = extractElements();
-          const pageHash = computeSemanticHash(elements);
+          // Use enhanced page hash that includes URL path for better state differentiation
+          const pageHash = computePageHash(elements, location.href);
           sendResponse({
             ok: true,
             data: {
