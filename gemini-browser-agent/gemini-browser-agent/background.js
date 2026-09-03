@@ -209,8 +209,15 @@ async function runLoop(tabId) {
 
           if (action.action === 'done') {
             state.status = 'done';
+            // Capture final observation before generating commentary
+            let finalObservation = null;
+            try {
+              finalObservation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+            } catch (e) {
+              console.warn('Could not capture final observation for commentary:', e);
+            }
             // Generate final commentary based on the task and what was accomplished
-            const commentary = await generateAgentCommentary(state.task, state.history, treeMemory);
+            const commentary = await generateAgentCommentary(state.task, state.history, treeMemory, finalObservation);
             state.agentCommentary = commentary;
             await setTaskState(tabId, state);
             await notifyPopup(tabId);
@@ -282,7 +289,7 @@ async function resumeAllActiveTasks() {
 }
 
 // --- Utilities ---
-async function generateAgentCommentary(task, history, treeMemory) {
+async function generateAgentCommentary(task, history, treeMemory, finalObservation) {
   // Use Gemini to generate a natural language summary/insight about the task execution
   try {
     const keys = await client.getApiKeys();
@@ -297,6 +304,17 @@ async function generateAgentCommentary(task, history, treeMemory) {
     const visitedStates = Object.keys(treeMemory.nodes || {}).length;
     const totalActions = history.length;
     
+    // Include actual page content from final state for data-driven insights
+    let pageDataContext = '';
+    if (finalObservation) {
+      pageDataContext = `
+FINAL PAGE URL: ${finalObservation.url || 'unknown'}
+FINAL PAGE TITLE: ${finalObservation.title || 'unknown'}
+VISIBLE TEXT ON PAGE: ${JSON.stringify(finalObservation.visibleText || []).slice(0, 3000)}
+INTERACTIVE ELEMENTS: ${JSON.stringify(finalObservation.elements || []).slice(0, 1000)}
+`;
+    }
+    
     const prompt = `You are a helpful AI assistant analyzing the results of a browser automation task.
 
 TASK GIVEN BY USER: "${task}"
@@ -308,13 +326,19 @@ STATS:
 - Total actions taken: ${totalActions}
 - Unique page states visited: ${visitedStates}
 
-Based on the task and actions performed, provide a brief, insightful commentary (2-4 sentences) in a conversational tone. 
-- If the task was about finding information (like "review my leetcode profile"), summarize what you found and give an honest assessment.
-- If the task was about performing an action (like "sign up for newsletter"), confirm completion and mention any observations.
-- Be direct and helpful. If you noticed patterns (e.g., "you have many unsolved hard problems" or "the site had multiple security steps"), mention them.
-- Do NOT just list actions. Provide actual insight or analysis.
+${pageDataContext}
 
-Example for LeetCode task: "I reviewed your LeetCode profile. You've solved 245 problems, which is solid! However, I noticed you're weaker on Dynamic Programming problems - only 12% success rate there. Your consistency could improve too; there's a 3-week gap in your recent activity. Focus on DP patterns and try to maintain daily streaks."
+Based on the task and the ACTUAL DATA found on the final page, provide a brief, insightful commentary (2-4 sentences) in a conversational tone.
+- If the task was about finding information (like "review my leetcode profile"), extract REAL numbers/facts from the VISIBLE TEXT ON PAGE above and give an honest assessment.
+- CRITICAL: Only mention specific statistics (like "you solved X problems") if you can see them in the VISIBLE TEXT ON PAGE section above. DO NOT invent numbers.
+- If you cannot find specific data in the page content, speak generally about what you observed or suggest the user check manually.
+- If the task was about performing an action (like "sign up for newsletter"), confirm completion and mention any observations.
+- Be direct and helpful. If you noticed patterns (e.g., "the page shows many unsolved problems" or "the site had multiple security steps"), mention them.
+- Do NOT just list actions. Provide actual insight or analysis based on real page content.
+
+Example GOOD commentary: "I reviewed your LeetCode profile page. The page shows you've been active recently, and I can see sections for your solved problems and contest ratings. Based on the visible stats, you appear to focus mainly on medium difficulty problems. Consider tackling more hard problems to improve your ranking."
+
+Example BAD commentary (DO NOT DO THIS): "You solved 245 problems with 67% accuracy." <- Never invent specific numbers unless they appear in VISIBLE TEXT ON PAGE.
 
 YOUR COMMENTARY:`;
 
