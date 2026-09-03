@@ -1,6 +1,7 @@
 import { GeminiClient } from './gemini-client.js';
 import { captureViewportM1 } from './m1-capture.js';
 import { runM2DomAnalysis } from './m2-dom.js';
+import { StateTreeMemory } from './state-tree-memory.js';
 
 const client = new GeminiClient();
 const MAX_ITERATIONS = 25;
@@ -67,7 +68,18 @@ async function startTask(tabId, task) {
 
   await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
 
-  const initialState = { task: task.trim(), history: [], memory: [], iteration: 0, stopped: false, status: 'running' };
+  const initialState = {
+    task: task.trim(),
+    history: [],
+    iteration: 0,
+    stopped: false,
+    status: 'running',
+    visitedHashes: {},
+    treeMemory: new StateTreeMemory().toJSON(),
+    lastAction: null,
+    lastHash: null,
+    lastElement: null
+  };
   await setTaskState(tabId, initialState);
   
   runLoop(tabId); 
@@ -127,13 +139,52 @@ async function runLoop(tabId) {
             observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
           }
 
+          if (!state.visitedHashes) {
+            state.visitedHashes = {};
+          }
+          state.visitedHashes[observation.pageHash] = (state.visitedHashes[observation.pageHash] || 0) + 1;
+          const visitCount = state.visitedHashes[observation.pageHash];
+
+          // Rehydrate and advance StateTreeMemory
+          const treeMemory = StateTreeMemory.fromJSON(state.treeMemory);
+
+          // If there was a previous action, record transition from lastHash to observation.pageHash
+          if (state.lastAction && state.lastHash) {
+            treeMemory.recordTransition(
+              state.lastHash,
+              observation.pageHash,
+              state.lastAction,
+              state.lastElement
+            );
+          }
+
+          // Register current page state node in tree
+          treeMemory.recordState(observation);
+
+          // Generate prompt-safe structured memory block
+          const treeMemoryContext = treeMemory.getPromptContext(observation);
+
+          // Update treeMemory in task state
+          state.treeMemory = treeMemory.toJSON();
+
           const action = await client.chooseNextAction(
             state.task,
-            { ...observation, actionHistory: state.history, memory: state.memory }
+            {
+              ...observation,
+              pageHash: observation.pageHash,
+              visitCount,
+              actionHistory: state.history,
+              treeMemoryContext
+            }
           );
 
-          if (action.memory) state.memory.push(action.memory);
-          delete action.memory;
+          // Extract targeted element for semantic transition tracking on next iteration
+          const targetEl = (observation.elements || []).find((el) => el.target_id === action.target_id) || null;
+          state.lastAction = action;
+          state.lastHash = observation.pageHash;
+          state.lastElement = targetEl ? { tag: targetEl.tag, type: targetEl.type, text: targetEl.text } : null;
+
+          if (action.memory) delete action.memory;
           state.history.push(action);
           
           await setTaskState(tabId, state);

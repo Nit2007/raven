@@ -70,6 +70,21 @@
       });
   }
 
+  // Lightweight DJB2 semantic hash for stable DOM state tracking
+  // Crucial Hashing Rule: concatenates tag, type/role, and text. Excludes dynamic target_id, coordinates, and timestamp.
+  function computeSemanticHash(elements) {
+    const raw = (elements || [])
+      .map((el) => `${el.tag || ''}|${el.type || ''}|${el.text || ''}`)
+      .join(';');
+
+    let hash = 5381;
+    for (let i = 0; i < raw.length; i++) {
+      hash = ((hash << 5) + hash) + raw.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
   function extractVisibleText() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const chunks = [];
@@ -472,13 +487,16 @@
           return;
         }
         if (msg.type === 'GET_OBSERVATION') {
+          const elements = extractElements();
+          const pageHash = computeSemanticHash(elements);
           sendResponse({
             ok: true,
             data: {
               url: location.href,
               title: document.title,
-              elements: extractElements(),
-              visibleText: extractVisibleText()
+              elements,
+              visibleText: extractVisibleText(),
+              pageHash
             }
           });
         } else if (msg.type === 'EXECUTE_ACTION') {
