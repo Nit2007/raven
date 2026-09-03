@@ -25,13 +25,26 @@
     return true;
   }
 
+  // Robust tag name extractor impervious to DOM clobbering (e.g. forms with <input name="tagName">)
+  function getSafeTagName(el) {
+    if (!el) return '';
+    if (typeof el.tagName === 'string') return el.tagName.toLowerCase();
+    if (typeof el.nodeName === 'string') return el.nodeName.toLowerCase();
+    try {
+      const raw = Object.getOwnPropertyDescriptor(Element.prototype, 'tagName')?.get?.call(el) ||
+                  Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')?.get?.call(el);
+      if (typeof raw === 'string') return raw.toLowerCase();
+    } catch (_) {}
+    return '';
+  }
+
   // --- Semantic & Interactive Identification Helpers ---
   function computeAriaRole(el) {
     if (!el) return null;
     const explicitRole = el.getAttribute ? el.getAttribute('role') : null;
     if (explicitRole) return explicitRole.trim().toLowerCase();
 
-    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const tag = getSafeTagName(el);
     switch (tag) {
       case 'a': return 'link';
       case 'button': return 'button';
@@ -100,9 +113,10 @@
     const parts = [];
     let curr = el;
     let depth = 0;
-    while (curr && curr.tagName && depth < 5) {
-      let tag = curr.tagName.toLowerCase();
-      if (curr.id) {
+    while (curr && depth < 5) {
+      let tag = getSafeTagName(curr);
+      if (!tag) break;
+      if (curr.id && typeof curr.id === 'string') {
         parts.unshift(`${tag}#${curr.id}`);
         break;
       } else {
@@ -116,7 +130,7 @@
 
   function isNaturallyInteractive(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
-    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const tag = getSafeTagName(el);
     if (['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'].includes(tag)) return true;
     if (el.hasAttribute && el.hasAttribute('role')) {
       const role = (el.getAttribute('role') || '').toLowerCase();
@@ -140,12 +154,12 @@
 
   function getStructuralSignature(el) {
     if (!el) return '';
-    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const tag = getSafeTagName(el);
     const role = (el.getAttribute ? el.getAttribute('role') : null) || computeAriaRole(el) || '';
     const type = (el.getAttribute ? el.getAttribute('type') : null) || '';
     const name = (getSemanticName(el) || '').slice(0, 40);
     const href = (el.getAttribute ? el.getAttribute('href') : null) || '';
-    const parentTag = el.parentElement ? el.parentElement.tagName.toLowerCase() : '';
+    const parentTag = el.parentElement ? getSafeTagName(el.parentElement) : '';
     const path = getSimplifiedDomPath(el);
     return `${tag}|${role}|${type}|${name}|${href}|parent:${parentTag}|path:${path}`;
   }
@@ -195,7 +209,7 @@
 
         const item = {
           target_id: assignId(el),
-          tag: el.tagName.toLowerCase(),
+          tag: getSafeTagName(el),
           type: el.getAttribute('type') || role || '',
           text: text || semanticName || '',
           actionable: isActionable,
@@ -209,7 +223,7 @@
         if (interactiveAncestor) {
           item.interactive_ancestor = {
             target_id: assignId(interactiveAncestor),
-            tag: interactiveAncestor.tagName.toLowerCase(),
+            tag: getSafeTagName(interactiveAncestor),
             role: computeAriaRole(interactiveAncestor) || 'link',
             name: getSemanticName(interactiveAncestor) || (interactiveAncestor.innerText || '').trim().slice(0, 40)
           };
@@ -319,7 +333,7 @@
 
   // --- Milestone M2: Semantic DOM Perception & Spatial Analysis ---
   function computeInteractivity(el, role) {
-    const tag = el.tagName.toLowerCase();
+    const tag = getSafeTagName(el);
     const interactiveTags = ['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'];
     const interactiveRoles = ['button', 'link', 'checkbox', 'tab', 'searchbox', 'menuitem', 'option', 'combobox', 'switch', 'radio', 'textbox', 'slider'];
 
@@ -443,7 +457,7 @@
 
       elements.push({
         target_id: targetId,
-        tag: el.tagName.toLowerCase(),
+        tag: getSafeTagName(el),
         role: role || 'generic',
         semanticName: semanticName || '',
         text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
@@ -484,7 +498,7 @@
           path: getSimplifiedDomPath(el),
           interactive_ancestor: interactiveAncestor ? {
             target_id: assignId(interactiveAncestor),
-            tag: interactiveAncestor.tagName.toLowerCase(),
+            tag: getSafeTagName(interactiveAncestor),
             role: computeAriaRole(interactiveAncestor) || 'link',
             name: getSemanticName(interactiveAncestor)
           } : null
