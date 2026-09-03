@@ -5,6 +5,8 @@ const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const optionsLink = document.getElementById('optionsLink');
 const m1Btn = document.getElementById('m1Btn');
+const commentarySection = document.getElementById('commentary-section');
+const agentCommentaryEl = document.getElementById('agent-commentary');
 
 let activeTabId = null;
 
@@ -68,6 +70,8 @@ function render(state) {
     startBtn.disabled = false;
     stopBtn.disabled = true;
     logEl.innerHTML = '';
+    commentarySection.style.display = 'none';
+    agentCommentaryEl.textContent = 'Waiting for analysis...';
     return;
   }
   statusEl.textContent = `${state.status} — step ${state.iteration}${state.error ? ' — ' + state.error : ''}`;
@@ -80,6 +84,17 @@ function render(state) {
     li.textContent = `${a.action}${a.target_id ? ' → ' + a.target_id : ''}${a.value ? ' = "' + a.value + '"' : ''}`;
     logEl.appendChild(li);
   });
+  
+  // Show agent commentary when task is done
+  if (state.status === 'done' && state.agentCommentary) {
+    commentarySection.style.display = 'block';
+    agentCommentaryEl.textContent = state.agentCommentary;
+  } else if (state.status === 'error' || state.status === 'max_iterations') {
+    commentarySection.style.display = 'block';
+    agentCommentaryEl.textContent = `⚠️ Task ended early: ${state.error || 'Max iterations reached'}. The agent got stuck or the task may be impossible.`;
+  } else {
+    commentarySection.style.display = 'none';
+  }
 }
 
 startBtn.addEventListener('click', async () => {

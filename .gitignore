@@ -29,7 +29,4 @@ coverage/
 # OS generated files
 .DS_Store
 Thumbs.db
-
-# Original rules preserved
-*.log
 ```

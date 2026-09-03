@@ -209,6 +209,9 @@ async function runLoop(tabId) {
 
           if (action.action === 'done') {
             state.status = 'done';
+            // Generate final commentary based on the task and what was accomplished
+            const commentary = await generateAgentCommentary(state.task, state.history, treeMemory);
+            state.agentCommentary = commentary;
             await setTaskState(tabId, state);
             await notifyPopup(tabId);
             return;
@@ -279,6 +282,59 @@ async function resumeAllActiveTasks() {
 }
 
 // --- Utilities ---
+async function generateAgentCommentary(task, history, treeMemory) {
+  // Use Gemini to generate a natural language summary/insight about the task execution
+  try {
+    const keys = await client.getApiKeys();
+    if (!keys || keys.length === 0) {
+      return "Task completed. (API keys not configured for detailed insights)";
+    }
+    
+    const actionSummary = history.map((h, i) => 
+      `${i + 1}. ${h.action}${h.target_id ? ` on element ${h.target_id}` : ''}${h.value ? ` with value "${h.value}"` : ''}`
+    ).join('\n');
+    
+    const visitedStates = Object.keys(treeMemory.nodes || {}).length;
+    const totalActions = history.length;
+    
+    const prompt = `You are a helpful AI assistant analyzing the results of a browser automation task.
+
+TASK GIVEN BY USER: "${task}"
+
+ACTIONS PERFORMED:
+${actionSummary}
+
+STATS:
+- Total actions taken: ${totalActions}
+- Unique page states visited: ${visitedStates}
+
+Based on the task and actions performed, provide a brief, insightful commentary (2-4 sentences) in a conversational tone. 
+- If the task was about finding information (like "review my leetcode profile"), summarize what you found and give an honest assessment.
+- If the task was about performing an action (like "sign up for newsletter"), confirm completion and mention any observations.
+- Be direct and helpful. If you noticed patterns (e.g., "you have many unsolved hard problems" or "the site had multiple security steps"), mention them.
+- Do NOT just list actions. Provide actual insight or analysis.
+
+Example for LeetCode task: "I reviewed your LeetCode profile. You've solved 245 problems, which is solid! However, I noticed you're weaker on Dynamic Programming problems - only 12% success rate there. Your consistency could improve too; there's a 3-week gap in your recent activity. Focus on DP patterns and try to maintain daily streaks."
+
+YOUR COMMENTARY:`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keys[0]}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+    
+    const data = await response.json();
+    const commentary = data.candidates?.[0]?.content?.parts?.[0]?.text || "Task completed successfully.";
+    return commentary.trim();
+  } catch (err) {
+    console.warn('Failed to generate commentary:', err);
+    return "Task completed. (Could not generate detailed insights)";
+  }
+}
+
 async function waitForTabLoad(tabId, timeoutMs = 10000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
