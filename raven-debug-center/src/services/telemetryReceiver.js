@@ -202,7 +202,11 @@ class TelemetryReceiver {
         store.updateVisionData({
           regions: data.regions || [],
           categories: data.categories || {},
-          sourceScreenshotUrl: data.screenshotUrl || null
+          sourceScreenshotUrl: data.screenshotUrl || null,
+          screenshotWidth: data.details?.screenshotWidth || null,
+          screenshotHeight: data.details?.screenshotHeight || null,
+          detector: data.details?.detector || 'morphological-cv-v1',
+          processingTimeMs: data.executionTimeMs || 0
         });
         break;
 

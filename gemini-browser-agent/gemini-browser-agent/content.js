@@ -578,6 +578,9 @@
           return;
         }
         if (msg.type === 'GET_OBSERVATION') {
+          if (msg.observationVersion) {
+            currentObservationVersion = msg.observationVersion;
+          }
           const elements = extractElements();
           const pageHash = computeSemanticHash(elements);
           sendResponse({
@@ -587,12 +590,14 @@
               title: document.title,
               elements,
               visibleText: extractVisibleText(),
-              pageHash
+              pageHash,
+              observationVersion: currentObservationVersion,
+              domFingerprint: `${elements.length}:${pageHash}`
             }
           });
         } else if (msg.type === 'EXECUTE_ACTION') {
           await executeAction(msg.action);
-          sendResponse({ ok: true });
+          sendResponse({ ok: true, urlAfter: location.href });
         } else {
           sendResponse({ ok: false, error: `Unknown message type: ${msg.type}` });
         }

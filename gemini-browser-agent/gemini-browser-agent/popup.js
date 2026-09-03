@@ -44,6 +44,24 @@ m2Btn?.addEventListener('click', async () => {
   });
 });
 
+const m3Btn = document.getElementById('m3Btn');
+m3Btn?.addEventListener('click', async () => {
+  activeTabId = await getActiveTabId();
+  if (activeTabId == null) return;
+  m3Btn.disabled = true;
+  m3Btn.textContent = 'Vision...';
+  chrome.runtime.sendMessage({ type: 'TRIGGER_M3', tabId: activeTabId }, (res) => {
+    m3Btn.disabled = false;
+    m3Btn.textContent = 'Analyze M3';
+    if (!res?.ok) {
+      statusEl.textContent = `M3 Error: ${res?.error || 'Vision analysis failed'}`;
+    } else {
+      const d = res.data;
+      statusEl.textContent = `M3 Vision: ${d?.totalDetections || 0} regions (${d?.detector}) — ${d?.processingTimeMs}ms`;
+    }
+  });
+});
+
 optionsLink.addEventListener('click', (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();
@@ -87,8 +105,11 @@ startBtn.addEventListener('click', async () => {
   if (activeTabId == null) return;
   const task = taskEl.value.trim();
   if (!task) return;
+  statusEl.textContent = 'Initializing task & navigating if needed...';
+  startBtn.disabled = true;
   chrome.runtime.sendMessage({ type: 'START_TASK', tabId: activeTabId, task }, (res) => {
     if (!res?.ok) {
+      startBtn.disabled = false;
       statusEl.textContent = `Error: ${res?.error || 'could not start'}`;
       return;
     }
