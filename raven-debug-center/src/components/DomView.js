@@ -294,6 +294,9 @@ export function renderDomView(container) {
                     <div style="background: var(--bg-surface-2); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                       <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 6px;">State & Interactability</div>
                       <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                        <span class="badge-pill ${selectedElement.actionable ? 'badge-success' : 'badge-waiting'}">
+                          ${selectedElement.actionable ? 'Actionable' : 'Nested / Non-Actionable'}
+                        </span>
                         <span class="badge-pill ${selectedElement.state?.interactive ? 'badge-success' : 'badge-waiting'}">
                           ${selectedElement.state?.interactive ? 'Interactive' : 'Non-Interactive'}
                         </span>
@@ -347,7 +350,7 @@ export function renderDomView(container) {
                     <!-- Hierarchy & DOM Path -->
                     <div style="background: var(--bg-surface-2); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                       <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 6px;">Hierarchy Context</div>
-                      <div style="font-size: 11.5px; display: grid; grid-template-columns: 80px 1fr; gap: 6px;">
+                      <div style="font-size: 11.5px; display: grid; grid-template-columns: 110px 1fr; gap: 6px;">
                         <span style="color: var(--text-muted);">Depth:</span>
                         <span style="font-family: var(--font-mono);">${selectedElement.hierarchy?.depth || 0}</span>
 
@@ -356,6 +359,20 @@ export function renderDomView(container) {
                           ${selectedElement.hierarchy?.parent_id ? `
                             <a href="#" class="select-target-link" data-link-id="${selectedElement.hierarchy.parent_id}" style="color: var(--text-cyan); font-family: var(--font-mono);">${selectedElement.hierarchy.parent_id}</a>
                           ` : '<span style="color: var(--text-muted);">root</span>'}
+                        </span>
+
+                        <span style="color: var(--text-muted);">Interactive Ancestor:</span>
+                        <span>
+                          ${selectedElement.hierarchy?.interactive_ancestor ? `
+                            <a href="#" class="select-target-link" data-link-id="${selectedElement.hierarchy.interactive_ancestor.target_id}" style="color: #f59e0b; font-weight: 600; font-family: var(--font-mono);">
+                              ${selectedElement.hierarchy.interactive_ancestor.target_id} (${selectedElement.hierarchy.interactive_ancestor.tag})
+                            </a>
+                          ` : '<span style="color: var(--text-muted); font-style: italic;">None (Self)</span>'}
+                        </span>
+
+                        <span style="color: var(--text-muted);">Structural Sig:</span>
+                        <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); word-break: break-all;">
+                          ${selectedElement.structuralSignature || '—'}
                         </span>
 
                         <span style="color: var(--text-muted);">Children:</span>

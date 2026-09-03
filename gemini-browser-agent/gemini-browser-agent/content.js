@@ -25,14 +25,141 @@
     return true;
   }
 
+  // --- Semantic & Interactive Identification Helpers ---
+  function computeAriaRole(el) {
+    if (!el) return null;
+    const explicitRole = el.getAttribute ? el.getAttribute('role') : null;
+    if (explicitRole) return explicitRole.trim().toLowerCase();
+
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    switch (tag) {
+      case 'a': return 'link';
+      case 'button': return 'button';
+      case 'input': {
+        const type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (type === 'checkbox') return 'checkbox';
+        if (type === 'radio') return 'radio';
+        if (type === 'search') return 'searchbox';
+        if (type === 'submit' || type === 'button' || type === 'reset') return 'button';
+        if (type === 'range') return 'slider';
+        return 'textbox';
+      }
+      case 'select': return 'combobox';
+      case 'textarea': return 'textbox';
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6': return 'heading';
+      case 'nav': return 'navigation';
+      case 'main': return 'main';
+      case 'header': return 'banner';
+      case 'footer': return 'contentinfo';
+      case 'img': return 'img';
+      case 'form': return 'form';
+      case 'dialog': return 'dialog';
+      case 'ul':
+      case 'ol': return 'list';
+      case 'li': return 'listitem';
+      case 'table': return 'table';
+      case 'details': return 'group';
+      case 'summary': return 'button';
+      default: return null;
+    }
+  }
+
+  function getSemanticName(el) {
+    if (!el) return '';
+    const labelledby = el.getAttribute ? el.getAttribute('aria-labelledby') : null;
+    if (labelledby) {
+      const labels = labelledby.split(/\s+/).map(id => document.getElementById(id)?.textContent?.trim()).filter(Boolean);
+      if (labels.length > 0) return labels.join(' ').slice(0, 100);
+    }
+    const ariaLabel = el.getAttribute ? el.getAttribute('aria-label') : null;
+    if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim().slice(0, 100);
+
+    const placeholder = el.getAttribute ? el.getAttribute('placeholder') : null;
+    if (placeholder && placeholder.trim()) return placeholder.trim().slice(0, 100);
+
+    const title = el.getAttribute ? el.getAttribute('title') : null;
+    if (title && title.trim()) return title.trim().slice(0, 100);
+
+    const alt = el.getAttribute ? el.getAttribute('alt') : null;
+    if (alt && alt.trim()) return alt.trim().slice(0, 100);
+
+    const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+    if (text) return text.slice(0, 100);
+
+    if (el.value && typeof el.value === 'string' && el.value.trim()) return el.value.trim().slice(0, 100);
+
+    return '';
+  }
+
+  function getSimplifiedDomPath(el) {
+    const parts = [];
+    let curr = el;
+    let depth = 0;
+    while (curr && curr.tagName && depth < 5) {
+      let tag = curr.tagName.toLowerCase();
+      if (curr.id) {
+        parts.unshift(`${tag}#${curr.id}`);
+        break;
+      } else {
+        parts.unshift(tag);
+      }
+      curr = curr.parentElement;
+      depth++;
+    }
+    return parts.join(' > ');
+  }
+
+  function isNaturallyInteractive(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'].includes(tag)) return true;
+    if (el.hasAttribute && el.hasAttribute('role')) {
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      if (['button', 'link', 'checkbox', 'tab', 'searchbox', 'menuitem', 'option', 'combobox', 'switch', 'radio'].includes(role)) return true;
+    }
+    if (el.isContentEditable || (el.getAttribute && el.getAttribute('contenteditable') === 'true')) return true;
+    if (el.hasAttribute && el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return true;
+    return false;
+  }
+
+  function getNearestInteractiveAncestor(el) {
+    let curr = el.parentElement;
+    while (curr && curr !== document.body && curr !== document.documentElement) {
+      if (isNaturallyInteractive(curr)) {
+        return curr;
+      }
+      curr = curr.parentElement;
+    }
+    return null;
+  }
+
+  function getStructuralSignature(el) {
+    if (!el) return '';
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const role = (el.getAttribute ? el.getAttribute('role') : null) || computeAriaRole(el) || '';
+    const type = (el.getAttribute ? el.getAttribute('type') : null) || '';
+    const name = (getSemanticName(el) || '').slice(0, 40);
+    const href = (el.getAttribute ? el.getAttribute('href') : null) || '';
+    const parentTag = el.parentElement ? el.parentElement.tagName.toLowerCase() : '';
+    const path = getSimplifiedDomPath(el);
+    return `${tag}|${role}|${type}|${name}|${href}|parent:${parentTag}|path:${path}`;
+  }
+
   function extractElements() {
+    // Broad, generic interactive element selector (supports SPAs where <a> might not have href)
     const selector = [
-      'a[href]',
+      'a',
       'button',
       'input',
       'select',
       'textarea',
       'summary',
+      'details',
       '[role="button"]',
       '[role="link"]',
       '[role="checkbox"]',
@@ -61,20 +188,44 @@
           .replace(/\s+/g, ' ')
           .slice(0, 80);
 
-        return {
+        const semanticName = getSemanticName(el);
+        const role = computeAriaRole(el);
+        const interactiveAncestor = getNearestInteractiveAncestor(el);
+        const isActionable = !interactiveAncestor || isNaturallyInteractive(el);
+
+        const item = {
           target_id: assignId(el),
           tag: el.tagName.toLowerCase(),
-          type: el.getAttribute('type') || el.getAttribute('role') || '',
-          text: text
+          type: el.getAttribute('type') || role || '',
+          text: text || semanticName || '',
+          actionable: isActionable,
+          clickable: isNaturallyInteractive(el) || !interactiveAncestor
         };
+
+        if (semanticName && semanticName !== text) {
+          item.accessible_name = semanticName;
+        }
+
+        if (interactiveAncestor) {
+          item.interactive_ancestor = {
+            target_id: assignId(interactiveAncestor),
+            tag: interactiveAncestor.tagName.toLowerCase(),
+            role: computeAriaRole(interactiveAncestor) || 'link',
+            name: getSemanticName(interactiveAncestor) || (interactiveAncestor.innerText || '').trim().slice(0, 40)
+          };
+        }
+
+        item.structural_signature = getStructuralSignature(el);
+
+        return item;
       });
   }
 
   // Lightweight DJB2 semantic hash for stable DOM state tracking
-  // Crucial Hashing Rule: concatenates tag, type/role, and text. Excludes dynamic target_id, coordinates, and timestamp.
+  // Crucial Hashing Rule: concatenates tag, type/role, and structural signatures. Excludes dynamic target_id, coordinates, and timestamp.
   function computeSemanticHash(elements) {
     const raw = (elements || [])
-      .map((el) => `${el.tag || ''}|${el.type || ''}|${el.text || ''}`)
+      .map((el) => `${el.tag || ''}|${el.type || ''}|${el.text || ''}|${el.structural_signature || ''}`)
       .join(';');
 
     let hash = 5381;
@@ -106,8 +257,12 @@
     switch (action.action) {
       case 'click': {
         const el = findEl(action.target_id);
-        el.scrollIntoView({ block: 'center', behavior: 'instant' });
-        el.click();
+        // Generic resolution: If the targeted element is an inner non-interactive element
+        // (e.g. badge span, icon svg) inside an actionable container (a, button, [role="button"]),
+        // resolve to the actionable container so default navigation and React event dispatchers are invoked properly.
+        const target = (!isNaturallyInteractive(el) && el.closest('a, button, [role="button"], [role="link"], [contenteditable="true"]')) || el;
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        target.click();
         return;
       }
       case 'type': {
@@ -163,74 +318,6 @@
   }
 
   // --- Milestone M2: Semantic DOM Perception & Spatial Analysis ---
-  function computeAriaRole(el) {
-    const explicitRole = el.getAttribute('role');
-    if (explicitRole) return explicitRole.trim().toLowerCase();
-
-    const tag = el.tagName.toLowerCase();
-    switch (tag) {
-      case 'a': return el.hasAttribute('href') ? 'link' : null;
-      case 'button': return 'button';
-      case 'input': {
-        const type = (el.getAttribute('type') || 'text').toLowerCase();
-        if (type === 'checkbox') return 'checkbox';
-        if (type === 'radio') return 'radio';
-        if (type === 'search') return 'searchbox';
-        if (type === 'submit' || type === 'button' || type === 'reset') return 'button';
-        if (type === 'range') return 'slider';
-        return 'textbox';
-      }
-      case 'select': return 'combobox';
-      case 'textarea': return 'textbox';
-      case 'h1':
-      case 'h2':
-      case 'h3':
-      case 'h4':
-      case 'h5':
-      case 'h6': return 'heading';
-      case 'nav': return 'navigation';
-      case 'main': return 'main';
-      case 'header': return 'banner';
-      case 'footer': return 'contentinfo';
-      case 'img': return 'img';
-      case 'form': return 'form';
-      case 'dialog': return 'dialog';
-      case 'ul':
-      case 'ol': return 'list';
-      case 'li': return 'listitem';
-      case 'table': return 'table';
-      case 'details': return 'group';
-      case 'summary': return 'button';
-      default: return null;
-    }
-  }
-
-  function getSemanticName(el) {
-    const labelledby = el.getAttribute('aria-labelledby');
-    if (labelledby) {
-      const labels = labelledby.split(/\s+/).map(id => document.getElementById(id)?.textContent?.trim()).filter(Boolean);
-      if (labels.length > 0) return labels.join(' ').slice(0, 100);
-    }
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim().slice(0, 100);
-
-    const placeholder = el.getAttribute('placeholder');
-    if (placeholder && placeholder.trim()) return placeholder.trim().slice(0, 100);
-
-    const title = el.getAttribute('title');
-    if (title && title.trim()) return title.trim().slice(0, 100);
-
-    const alt = el.getAttribute('alt');
-    if (alt && alt.trim()) return alt.trim().slice(0, 100);
-
-    const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
-    if (text) return text.slice(0, 100);
-
-    if (el.value && typeof el.value === 'string' && el.value.trim()) return el.value.trim().slice(0, 100);
-
-    return '';
-  }
-
   function computeInteractivity(el, role) {
     const tag = el.tagName.toLowerCase();
     const interactiveTags = ['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'];
@@ -304,24 +391,6 @@
     }
   }
 
-  function getSimplifiedDomPath(el) {
-    const parts = [];
-    let curr = el;
-    let depth = 0;
-    while (curr && curr.tagName && depth < 5) {
-      let tag = curr.tagName.toLowerCase();
-      if (curr.id) {
-        parts.unshift(`${tag}#${curr.id}`);
-        break;
-      } else {
-        parts.unshift(tag);
-      }
-      curr = curr.parentElement;
-      depth++;
-    }
-    return parts.join(' > ');
-  }
-
   function analyzeSemanticDom() {
     const vpWidth = window.innerWidth;
     const vpHeight = window.innerHeight;
@@ -330,7 +399,7 @@
     const scrollY = window.scrollY || 0;
 
     const selector = [
-      'a[href]', 'button', 'input', 'select', 'textarea', 'summary', 'details',
+      'a', 'button', 'input', 'select', 'textarea', 'summary', 'details',
       '[role]', '[contenteditable="true"]', '[tabindex]',
       'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'nav', 'main', 'header', 'footer', 'form'
     ].join(', ');
@@ -356,6 +425,8 @@
       const visibility = computeVisibility(rect, style, vpWidth, vpHeight);
       const occlusion = testOcclusion(el, rect, visibility, vpWidth, vpHeight);
       const semanticName = getSemanticName(el);
+      const interactiveAncestor = getNearestInteractiveAncestor(el);
+      const isActionable = !interactiveAncestor || isNaturallyInteractive(el);
 
       const targetId = assignId(el);
       elementIdMap.set(el, targetId);
@@ -376,6 +447,7 @@
         role: role || 'generic',
         semanticName: semanticName || '',
         text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+        actionable: isActionable,
         attributes: {
           type: el.getAttribute('type') || null,
           href: el.getAttribute('href') || null,
@@ -409,8 +481,15 @@
           depth: 0,
           parent_id: null,
           children_ids: [],
-          path: getSimplifiedDomPath(el)
+          path: getSimplifiedDomPath(el),
+          interactive_ancestor: interactiveAncestor ? {
+            target_id: assignId(interactiveAncestor),
+            tag: interactiveAncestor.tagName.toLowerCase(),
+            role: computeAriaRole(interactiveAncestor) || 'link',
+            name: getSemanticName(interactiveAncestor)
+          } : null
         },
+        structuralSignature: getStructuralSignature(el),
         _domNode: el
       });
     }
@@ -475,11 +554,9 @@
           sendResponse({
             ok: true,
             data: {
-              cssWidth: window.innerWidth,
-              cssHeight: window.innerHeight,
+              width: window.innerWidth,
+              height: window.innerHeight,
               devicePixelRatio: window.devicePixelRatio || 1,
-              screenWidth: window.screen ? window.screen.width : null,
-              screenHeight: window.screen ? window.screen.height : null,
               url: location.href,
               title: document.title
             }
@@ -501,7 +578,7 @@
           });
         } else if (msg.type === 'EXECUTE_ACTION') {
           await executeAction(msg.action);
-          sendResponse({ ok: true, data: { executed: true } });
+          sendResponse({ ok: true });
         } else {
           sendResponse({ ok: false, error: `Unknown message type: ${msg.type}` });
         }

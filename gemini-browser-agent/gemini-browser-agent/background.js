@@ -148,13 +148,19 @@ async function runLoop(tabId) {
           // Rehydrate and advance StateTreeMemory
           const treeMemory = StateTreeMemory.fromJSON(state.treeMemory);
 
-          // If there was a previous action, record transition from lastHash to observation.pageHash
-          if (state.lastAction && state.lastHash) {
+          // If there was a previous action, classify real outcome and record transition
+          if (state.lastAction && (state.lastObservation || state.lastHash)) {
+            const outcome = StateTreeMemory.classifyOutcome(
+              state.lastObservation,
+              observation,
+              state.lastAction
+            );
             treeMemory.recordTransition(
-              state.lastHash,
+              state.lastHash || state.lastObservation?.pageHash,
               observation.pageHash,
               state.lastAction,
-              state.lastElement
+              state.lastElement,
+              outcome
             );
           }
 
@@ -182,7 +188,14 @@ async function runLoop(tabId) {
           const targetEl = (observation.elements || []).find((el) => el.target_id === action.target_id) || null;
           state.lastAction = action;
           state.lastHash = observation.pageHash;
-          state.lastElement = targetEl ? { tag: targetEl.tag, type: targetEl.type, text: targetEl.text } : null;
+          state.lastObservation = observation;
+          state.lastElement = targetEl ? {
+            tag: targetEl.tag,
+            type: targetEl.type,
+            text: targetEl.text,
+            structural_signature: targetEl.structural_signature,
+            actionable: targetEl.actionable
+          } : null;
 
           if (action.memory) delete action.memory;
           state.history.push(action);
