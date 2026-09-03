@@ -101,7 +101,8 @@ export class GeminiClient {
 
 function buildSingleActionPrompt(task, observation, treeMemoryContext = '') {
   const { pageHash, visitCount } = observation;
-  const elementsText = JSON.stringify(observation.elements || []);
+  // Include richer element data in prompt for better decision making
+  const elementsText = JSON.stringify(observation.elements || [], null, 2);
   const visibleText = JSON.stringify(observation.visibleText || []);
   const historyText = JSON.stringify(observation.actionHistory || []);
 
@@ -125,7 +126,7 @@ ${observation.url || 'about:blank'}
 PAGE TITLE:
 ${observation.title || 'Untitled'}
 
-Current Page State Hash: ${observation.pageHash}
+Current Page State Hash: ${pageHash}
 
 Visits to this exact state: ${visitCount}
 
@@ -144,6 +145,9 @@ Rules:
 - If the task already looks complete given the page state, return the "done" action.
 - CRITICAL: Before choosing an action, check the Tree Memory. If your planned action matches any pruned/failed action, you MUST choose a different element.
 - If all interactive elements have been tried and failed, the task is likely complete — return "done".
+- For complex/nested elements: Look at ariaLabel, role, hasChildren, and childCount fields to understand element context better.
+- Elements with hasChildren:true may contain nested interactive content - consider clicking parent containers if direct children aren't responding.
+- Buttons styled with classes like "btn" or "button" but lacking proper tag semantics may need click events dispatched directly.
 
 Return ONLY one of these JSON shapes (every shape MUST include the "thought" field):
 {"thought":"...","action":"click","target_id":"...","iterations_remaining":N}
@@ -153,7 +157,7 @@ Return ONLY one of these JSON shapes (every shape MUST include the "thought" fie
 {"thought":"...","action":"wait","wait_ms":2000,"iterations_remaining":N}
 {"thought":"...","action":"done","iterations_remaining":0}
 
-"thought" is your chain-of-reasoning: analyze the current DOM and Tree Memory to verify you are not selecting a pruned target_id, check action history, and state your plan for this exact step.
+"thought" is your chain-of-reasoning: analyze the current DOM and Tree Memory to verify you are not selecting a pruned target_id, check action history, consider element hierarchy (hasChildren, childCount), and state your plan for this exact step.
 "iterations_remaining" is your estimate of how many MORE actions are needed after this one.`;
 
   // Escalating loop detection and recovery
@@ -166,7 +170,8 @@ Return ONLY one of these JSON shapes (every shape MUST include the "thought" fie
 1. Immediately abandon your current strategy.
 2. DO NOT click/type on any element you've already tried at this state (see "Actions Already Attempted").
 3. Try a DIFFERENT approach: scroll to reveal new content, look for a search bar, navigate back/up in the hierarchy, or mark the task "done" if goals appear met.
-4. If no new elements exist and task seems complete, output "done" action.`;
+4. Consider clicking parent container elements (hasChildren:true) instead of individual child elements.
+5. If no new elements exist and task seems complete, output "done" action.`;
   }
 
   return prompt;

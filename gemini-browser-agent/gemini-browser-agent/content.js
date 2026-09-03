@@ -41,17 +41,30 @@
       '[role="menuitem"]',
       '[role="option"]',
       '[role="combobox"]',
-      '[contenteditable="true"]'
+      '[contenteditable="true"]',
+      // Add common nested/complex patterns
+      '[onclick]',
+      '[tabindex]:not([tabindex="-1"])',
+      'details',
+      '[aria-expanded]',
+      '[aria-haspopup]',
+      '.btn',
+      '.button',
+      '[class*="btn"]',
+      '[class*="button"]'
     ].join(', ');
 
     const nodes = Array.from(document.querySelectorAll(selector));
     return nodes
       .filter(isVisible)
-      .slice(0, 200)
+      .slice(0, 350)  // Increased limit for complex pages
       .map((el) => {
+        // Enhanced text extraction with better fallbacks
         const text = (
           el.innerText ||
+          el.textContent?.trim() ||
           el.getAttribute('aria-label') ||
+          el.getAttribute('aria-labelledby') && document.getElementById(el.getAttribute('aria-labelledby'))?.textContent ||
           el.getAttribute('placeholder') ||
           el.getAttribute('title') ||
           el.value ||
@@ -59,13 +72,28 @@
         )
           .trim()
           .replace(/\s+/g, ' ')
-          .slice(0, 80);
+          .slice(0, 100);  // Increased text capture
+
+        // Better type detection for complex elements
+        let elementType = el.getAttribute('type') || '';
+        if (!elementType && el.hasAttribute('role')) {
+          elementType = el.getAttribute('role');
+        } else if (!elementType && el.tagName === 'A') {
+          elementType = 'link';
+        } else if (!elementType && el.classList.contains('btn') || el.classList.contains('button')) {
+          elementType = 'button';
+        }
 
         return {
           target_id: assignId(el),
           tag: el.tagName.toLowerCase(),
-          type: el.getAttribute('type') || el.getAttribute('role') || '',
-          text: text
+          type: elementType,
+          text: text,
+          // Include additional context for nested elements
+          ariaLabel: el.getAttribute('aria-label') || '',
+          role: el.getAttribute('role') || '',
+          hasChildren: el.children.length > 0,
+          childCount: el.children.length
         };
       });
   }
@@ -89,16 +117,21 @@
   function computePageHash(elements, url) {
     const elementHash = computeSemanticHash(elements);
     // Extract base path without query params for more stable hashing
-    const urlObj = new URL(url);
-    const basePath = urlObj.pathname;
-    const combined = `${basePath}|${elementHash}`;
-    
-    let hash = 5381;
-    for (let i = 0; i < combined.length; i++) {
-      hash = ((hash << 5) + hash) + combined.charCodeAt(i);
-      hash = hash & hash;
+    try {
+      const urlObj = new URL(url);
+      const basePath = urlObj.pathname;
+      const combined = `${basePath}|${elementHash}`;
+      
+      let hash = 5381;
+      for (let i = 0; i < combined.length; i++) {
+        hash = ((hash << 5) + hash) + combined.charCodeAt(i);
+        hash = hash & hash;
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0');
+    } catch (e) {
+      // Fallback for invalid URLs
+      return elementHash;
     }
-    return (hash >>> 0).toString(16).padStart(8, '0');
   }
 
   function extractVisibleText() {
@@ -122,8 +155,28 @@
     switch (action.action) {
       case 'click': {
         const el = findEl(action.target_id);
-        el.scrollIntoView({ block: 'center', behavior: 'instant' });
-        el.click();
+        // Better scroll handling for nested/obscured elements
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        await sleep(150); // Small delay after scroll
+        
+        // Try multiple click methods for complex buttons
+        if (typeof el.click === 'function') {
+          el.click();
+        } else {
+          // Fallback for non-standard clickable elements
+          el.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          }));
+        }
+        
+        // Additional fallback for form submission buttons
+        if (el.tagName === 'BUTTON' && el.type === 'submit' && el.form) {
+          if (typeof el.form.requestSubmit === 'function') {
+            el.form.requestSubmit();
+          }
+        }
         return;
       }
       case 'type': {
@@ -176,6 +229,11 @@
       default:
         throw new Error(`Unknown action "${action.action}"`);
     }
+  }
+  
+  // Helper sleep function for action execution
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // --- Milestone M2: Semantic DOM Perception & Spatial Analysis ---
