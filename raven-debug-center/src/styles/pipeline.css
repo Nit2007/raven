@@ -3,14 +3,16 @@
   padding: 12px 24px;
   background: rgba(10, 15, 29, 0.6);
   border-bottom: 1px solid var(--border-subtle);
-  overflow-x: auto;
+  overflow-x: visible;
 }
 
 .pipeline-dag-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  min-width: max-content;
+  gap: 8px 8px;
+  row-gap: 10px;
+  min-width: 0;
   padding: 4px 0;
 }
 
@@ -27,6 +29,8 @@
   color: var(--text-secondary);
   transition: all 0.2s ease;
   position: relative;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .dag-node.active {

@@ -58,6 +58,28 @@ export function renderPrivacyView(container) {
           </div>
         </div>
 
+        ${items.some(i => i.thumbnailDataUrl) ? `
+          <div class="debug-card" style="margin-top: 14px;">
+            <div class="card-header-row">
+              <div class="card-title">🫥 Redacted Faces — Local Blur Applied</div>
+              <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">
+                Pixels blurred client-side, before transmission
+              </span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px;">
+              ${items.filter(i => i.thumbnailDataUrl).map(i => `
+                <div style="text-align: center; width: 96px;">
+                  <img src="${i.thumbnailDataUrl}"
+                       style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border-rose, #f43f5e); display: block; margin: 0 auto;"
+                       alt="Blurred face detection" />
+                  <div style="font-size: 10.5px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono);">${i.id}</div>
+                  <div style="font-size: 10px; color: var(--text-rose, #f43f5e);">${Math.round((i.confidence || 0) * 100)}% conf.</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+
         ${!hasData ? `
           <div class="empty-state">
             <div class="empty-state-icon">🛡️</div>
@@ -104,7 +126,10 @@ export function renderPrivacyView(container) {
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 11.5px;">
                           <!-- Never expose raw secrets: ensure masked representation -->
-                          ${item.maskedPreview ? `<code>${item.maskedPreview}</code>` : `<span style="color: var(--text-muted); font-style: italic;">[REDACTED VALUE]</span>`}
+                          ${item.thumbnailDataUrl ? `
+                            <img src="${item.thumbnailDataUrl}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 6px; border: 1px solid var(--border-rose, #f43f5e);" alt="Blurred face" />
+                            <span style="color: var(--text-muted); font-style: italic;">blurred (local)</span>
+                          ` : item.maskedPreview ? `<code>${item.maskedPreview}</code>` : `<span style="color: var(--text-muted); font-style: italic;">[REDACTED VALUE]</span>`}
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 11px;">
                           ${item.confidence ? Math.round(item.confidence * 100) + '%' : '—'}

@@ -226,21 +226,31 @@ class TelemetryReceiver {
         break;
 
       case 'M5_PII':
-      case 'M5_RESULT':
+      case 'M5_RESULT': {
         store.updateMilestone('M5', {
           status: data.status || MILESTONE_STATUS.SUCCESS,
           executionTimeMs: data.executionTimeMs || 0,
           summary: data.summary || `${(data.items || []).length} sensitive entities tagged`,
           details: data.details || null
         });
+        // FIX: m5-pii.js sends the blurred full-page screenshot as both
+        // `redactedScreenshotUrl` (top level) and `details.redactedScreenshotUrl`.
+        // This case used to read neither, so `store.privacy.screenshotUrl` was
+        // never set and VisionView's main canvas never showed the blurred
+        // image — only the small per-milestone thumbnail did. Only include the
+        // key when we actually have a fresh one, so a cycle with 0 faces
+        // doesn't wipe out the last good redacted screenshot from view.
+        const redactedShot = data.redactedScreenshotUrl || data.details?.redactedScreenshotUrl || null;
         store.updatePrivacyData({
           items: data.items || [],
           facesDetected: data.facesDetected || 0,
           piiDetected: data.piiDetected || 0,
           sensitiveRegions: data.sensitiveRegions || 0,
-          gateStatus: data.gateStatus || PRIVACY_GATE_STATUS.WAITING
+          gateStatus: data.gateStatus || PRIVACY_GATE_STATUS.WAITING,
+          ...(redactedShot ? { screenshotUrl: redactedShot } : {})
         });
         break;
+      }
 
       case 'M6_FUSION':
       case 'M6_RESULT':

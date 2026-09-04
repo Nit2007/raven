@@ -283,7 +283,85 @@ export function renderPipelineView(container) {
               `;
             }
 
-            // Other Milestones (M3–M6) standard cards
+            if (m.id === 'M5') {
+              const privacy = state.privacy;
+              const det = m.details || {};
+              const facesDetected = privacy.facesDetected || 0;
+              const piiDetected = privacy.piiDetected || 0;
+              const sensitiveRegions = privacy.sensitiveRegions || 0;
+              const latency = m.executionTimeMs || det.latencyMs || 0;
+              const ts = m.lastUpdated || det.timestamp ? new Date(m.lastUpdated || det.timestamp).toLocaleTimeString() : '—';
+              const redactedShot = det.redactedScreenshotUrl;
+
+              return `
+                <div class="milestone-card status-${m.status}" id="card-M5">
+                  <div class="milestone-header">
+                    <div class="milestone-title-group">
+                      <span class="milestone-code">M5</span>
+                      <span class="milestone-name">M5 — Face & PII / Sensitive Content Detection</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <button class="btn-cyber btn-cyber-primary" id="m5-trigger-btn" style="padding: 4px 10px; font-size: 11.5px;" title="Trigger live face/PII scan">
+                        <span>⚡</span>
+                        <span>Scan Now</span>
+                      </button>
+                      <span class="badge-pill ${statusBadgeClass}">${m.status.toUpperCase()}</span>
+                    </div>
+                  </div>
+
+                  <div class="m1-status-grid" style="margin-top: 12px;">
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">STATUS</span>
+                      <span class="m1-grid-val ${m.status === 'success' ? 'emerald' : m.status === 'error' ? 'red' : ''}">${m.status.toUpperCase()}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">FACES DETECTED</span>
+                      <span class="m1-grid-val" style="color: var(--text-rose, #f43f5e);">${facesDetected}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">PII ENTITIES</span>
+                      <span class="m1-grid-val" style="color: #f59e0b;">${piiDetected}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">SENSITIVE REGIONS</span>
+                      <span class="m1-grid-val">${sensitiveRegions}</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">SCAN LATENCY</span>
+                      <span class="m1-grid-val violet">${latency} ms</span>
+                    </div>
+                    <div class="m1-grid-item">
+                      <span class="m1-grid-label">TIMESTAMP</span>
+                      <span class="m1-grid-val" style="font-size: 11px;">${ts}</span>
+                    </div>
+                  </div>
+
+                  ${redactedShot ? `
+                    <div style="margin-top: 12px;">
+                      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em;">Live Redacted Viewport</div>
+                      <img src="${redactedShot}" style="width: 100%; border-radius: 8px; border: 1px solid var(--border, #232c38); display: block;" alt="Screenshot with detected faces blurred" />
+                    </div>
+                  ` : ''}
+
+                  ${m.status === 'error' && det.error ? `
+                    <div style="margin-top: 12px; padding: 10px; border-radius: var(--radius-sm); background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 12px; font-family: var(--font-mono);">
+                      <strong>Error:</strong> ${det.error}
+                    </div>
+                  ` : ''}
+
+                  <div class="milestone-footer" style="margin-top: 12px;">
+                    <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">
+                      ${m.summary || 'Awaiting sensitive entity & PII scan.'}
+                    </span>
+                    <button class="milestone-toggle-btn" data-toggle="M5">
+                      ${isExpanded ? 'Hide Details ▲' : 'Inspect Details ▼'}
+                    </button>
+                  </div>
+                </div>
+              `;
+            }
+
+            // Other Milestones (M3–M4, M6) standard cards
             return `
               <div class="milestone-card status-${m.status}" id="card-${m.id}">
                 <div class="milestone-header">
@@ -363,6 +441,10 @@ export function renderPipelineView(container) {
 
     container.querySelector('#m2-trigger-btn')?.addEventListener('click', () => {
       window.postMessage({ type: 'RAVEN_TRIGGER_M2' }, '*');
+    });
+
+    container.querySelector('#m5-trigger-btn')?.addEventListener('click', () => {
+      window.postMessage({ type: 'RAVEN_TRIGGER_M5' }, '*');
     });
   }
 
