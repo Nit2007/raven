@@ -40,6 +40,8 @@ export function renderVisionView(container) {
     // Hypothesis colors for distinct visual clarity
     const getTypeColor = (type) => {
       const t = (type || '').toLowerCase();
+      if (t.includes('badge')) return { border: '#ec4899', bg: 'rgba(236, 72, 153, 0.16)', label: '#db2777' };
+      if (t.includes('card')) return { border: '#14b8a6', bg: 'rgba(20, 184, 166, 0.14)', label: '#0d9488' };
       if (t.includes('button')) return { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.16)', label: '#0891b2' };
       if (t.includes('input')) return { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.16)', label: '#2563eb' };
       if (t.includes('text')) return { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.16)', label: '#d97706' };
@@ -103,7 +105,7 @@ export function renderVisionView(container) {
         ` : `
           <!-- Category Filter Bar -->
           <div style="display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;">
-            ${['ALL', 'BUTTON', 'INPUT', 'TEXT', 'CONTAINER', 'IMAGE'].map(cat => `
+            ${['ALL', 'BUTTON', 'INPUT', 'CARD', 'BADGE', 'TEXT', 'CONTAINER', 'IMAGE'].map(cat => `
               <button class="btn-cyber ${selectedCategoryFilter === cat ? 'btn-cyber-primary' : ''}" data-cat="${cat}" style="font-size: 11px; padding: 4px 10px;">
                 ${cat}
               </button>

@@ -220,6 +220,8 @@ export async function decodeImagePixels(imageInput) {
 
 /**
  * Computes luminance, spatial gradient, adaptive threshold, and morphological UI clusters
+ * Upgraded with multi-scale gradient energy, adaptive local thresholding, dense component discovery,
+ * and high-recall geometric hypothesis classification (icon buttons, badges, cards, inputs).
  */
 export function analyzeVisualRegions(pixelData, width, height, originalWidth, originalHeight) {
   const S_x = (originalWidth || width) / width;
@@ -245,19 +247,29 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
     chroma[i] = maxVal - minVal;
   }
 
-  // 2. Spatial gradient computation (Central Differences / Sobel approximation)
+  // 2. Multi-scale spatial gradient computation
+  // Scale 1: 1px central difference for fine sharp edges (1px borders, text strokes, small icon paths)
+  // Scale 2: 2px central difference for soft/gradient button borders & anti-aliased curves
   const gradient = new Float32Array(numPixels);
   let gradSum = 0;
   let gradSqSum = 0;
   let activeGradCount = 0;
 
-  for (let y = 1; y < height - 1; y++) {
+  for (let y = 2; y < height - 2; y++) {
     const rowOffset = y * width;
-    for (let x = 1; x < width - 1; x++) {
+    for (let x = 2; x < width - 2; x++) {
       const idx = rowOffset + x;
-      const gx = luminance[idx + 1] - luminance[idx - 1];
-      const gy = luminance[idx + width] - luminance[idx - width];
-      const gMag = Math.sqrt(gx * gx + gy * gy);
+      // Scale 1 (1px)
+      const gx1 = luminance[idx + 1] - luminance[idx - 1];
+      const gy1 = luminance[idx + width] - luminance[idx - width];
+      const g1 = Math.sqrt(gx1 * gx1 + gy1 * gy1);
+
+      // Scale 2 (2px)
+      const gx2 = (luminance[idx + 2] - luminance[idx - 2]) * 0.5;
+      const gy2 = (luminance[idx + (width << 1)] - luminance[idx - (width << 1)]) * 0.5;
+      const g2 = Math.sqrt(gx2 * gx2 + gy2 * gy2);
+
+      const gMag = Math.max(g1, g2);
       gradient[idx] = gMag;
       gradSum += gMag;
       gradSqSum += gMag * gMag;
@@ -265,11 +277,11 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
     }
   }
 
-  // 3. Dynamic adaptive thresholding (No fixed magic numbers; derived from mean & std-dev of contrast)
+  // 3. Dynamic adaptive thresholding derived from mean & std-dev of contrast
   const meanG = activeGradCount > 0 ? gradSum / activeGradCount : 0;
   const varianceG = activeGradCount > 0 ? (gradSqSum / activeGradCount) - (meanG * meanG) : 0;
   const stdG = Math.sqrt(Math.max(0, varianceG));
-  const dynamicThreshold = Math.max(10, Math.min(45, meanG + 0.45 * stdG));
+  const dynamicThreshold = Math.max(6, Math.min(38, meanG + 0.35 * stdG));
 
   // 4. Binary edge map
   const binaryEdge = new Uint8Array(numPixels);
@@ -284,11 +296,11 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
   let currentLabel = 0;
   const components = [];
 
-  // Flood-fill connected component discovery with spatial bounding aggregation
-  const minDim = 6;
-  for (let y = 1; y < height - 1; y += 2) {
+  // Dense pixel scan (stride 1) ensures 1px icon strokes, dots, and borders are not skipped
+  const minDim = 3;
+  for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
-    for (let x = 1; x < width - 1; x += 2) {
+    for (let x = 1; x < width - 1; x++) {
       const startIdx = rowOffset + x;
       if (binaryEdge[startIdx] === 1 && labels[startIdx] === 0) {
         currentLabel++;
@@ -299,7 +311,7 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
         let chromaSum = 0;
         let edgeGradSum = 0;
 
-        // BFS queue
+        // BFS queue with 8-neighborhood connectivity
         const queue = [startIdx];
         labels[startIdx] = currentLabel;
 
@@ -320,8 +332,13 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
           if (cy < minY) minY = cy;
           if (cy > maxY) maxY = cy;
 
-          // 4-neighborhood inspection
-          const neighbors = [idx - 1, idx + 1, idx - width, idx + width];
+          // 8-neighborhood inspection (bridges diagonal strokes in rounded buttons and circular icons)
+          const neighbors = [
+            idx - 1, idx + 1,
+            idx - width, idx + width,
+            idx - width - 1, idx - width + 1,
+            idx + width - 1, idx + width + 1
+          ];
           for (const n of neighbors) {
             if (n >= 0 && n < numPixels && labels[n] === 0 && binaryEdge[n] === 1) {
               labels[n] = currentLabel;
@@ -330,7 +347,7 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
           }
 
           // Safety guard against massive connected background fills
-          if (pixelCount > 15000) break;
+          if (pixelCount > 20000) break;
         }
 
         const boxW = maxX - minX + 1;
@@ -366,15 +383,15 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
         if (visited.has(j)) continue;
         const o = components[j];
 
-        // Check hierarchical containment (e.g. card container enclosing button)
+        // Check hierarchical containment (e.g. card container enclosing button, or icon enclosing badge)
         const areaB = b.boxW * b.boxH;
         const areaO = o.boxW * o.boxH;
         const areaRatio = Math.max(areaB, areaO) / (Math.min(areaB, areaO) + 1);
 
         const bEnclosesO = b.minX <= o.minX && b.maxX >= o.maxX && b.minY <= o.minY && b.maxY >= o.maxY;
         const oEnclosesB = o.minX <= b.minX && o.maxX >= b.maxX && o.minY <= b.minY && o.maxY >= b.maxY;
-        if ((bEnclosesO || oEnclosesB) && areaRatio > 1.8) {
-          continue; // Keep container and child as distinct visual regions
+        if ((bEnclosesO || oEnclosesB) && areaRatio > 1.6) {
+          continue; // Keep container and child control as distinct visual regions
         }
 
         // Spatial proximity condition: horizontal gap <= 8px or vertical gap <= 6px with comparable size
@@ -383,7 +400,7 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
         const xGap = Math.max(0, Math.max(b.minX, o.minX) - Math.min(b.maxX, o.maxX));
         const yGap = Math.max(0, Math.max(b.minY, o.minY) - Math.min(b.maxY, o.maxY));
 
-        if (areaRatio <= 3.5 && ((xGap <= 8 && yOverlap > 4) || (yGap <= 6 && xOverlap > 8))) {
+        if (areaRatio <= 4.0 && ((xGap <= 8 && yOverlap > 4) || (yGap <= 6 && xOverlap > 6))) {
           b.minX = Math.min(b.minX, o.minX);
           b.maxX = Math.max(b.maxX, o.maxX);
           b.minY = Math.min(b.minY, o.minY);
@@ -423,8 +440,8 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
     const h = Math.max(4, Math.min(rawH, origH - y));
     const area = w * h;
 
-    // Filter degenerate micro-regions (< 120 px area) or full-viewport frame
-    if (area < 120 || (w >= origW * 0.98 && h >= origH * 0.98)) continue;
+    // Filter degenerate micro-regions (< 64 px area) or full-viewport frame
+    if (area < 64 || (w >= origW * 0.98 && h >= origH * 0.98)) continue;
 
     // Auditable Geometric & Morphological Features
     const aspectRatio = Number((w / h).toFixed(2));
@@ -444,37 +461,55 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
     const cx = Math.round(x + w / 2);
     const cy = Math.round(y + h / 2);
 
-    // 8. Visual Hypothesis Classification (Strictly optical/geometric properties — ZERO domain rules)
+    // 8. Multi-Scale Hypothesis Classification (Pure visual geometry & optics — ZERO domain rules)
     let type = 'region';
-    let confidence = 0.70;
 
     if (relativeWidth > 0.32 && relativeHeight > 0.14) {
       // Large layout container
       type = 'container-like-region';
-      confidence = 0.88;
-    } else if (aspectRatio >= 1.0 && aspectRatio <= 5.5 && h >= 18 && h <= 68 && w >= 36 && w <= 320) {
-      // Compact interactive rectangle hypothesis
+    } else if (w >= 120 && w <= 700 && h >= 90 && h <= 650 && aspectRatio >= 0.4 && aspectRatio <= 2.8 && relativeWidth <= 0.65) {
+      // Mid-to-large structured item / product / content card
+      type = 'card-like-region';
+    } else if (aspectRatio >= 1.0 && aspectRatio <= 6.0 && h >= 18 && h <= 72 && w >= 32 && w <= 340) {
+      // Standard rectangular action button
       type = 'button-like-region';
-      confidence = Number(Math.min(0.95, 0.75 + (rectangularity * 0.15) + (edgeDensity * 0.05)).toFixed(2));
-    } else if (aspectRatio >= 2.8 && aspectRatio <= 14.0 && h >= 22 && h <= 64 && colorVariance <= 0.35) {
+    } else if (aspectRatio >= 0.65 && aspectRatio <= 1.50 && w >= 14 && w <= 52 && h >= 14 && h <= 52) {
+      // Compact square/circular icon control (e.g. cart icon, menu toggle, close 'x')
+      type = 'icon-button-like-region';
+    } else if (aspectRatio >= 0.60 && aspectRatio <= 2.4 && w >= 10 && w <= 36 && h >= 10 && h <= 28 && (meanChroma > 20 || colorVariance > 0.30 || edgeDensity > 0.25)) {
+      // Compact indicator / count tag (e.g. cart badge counter)
+      type = 'badge-like-region';
+    } else if (aspectRatio >= 2.5 && aspectRatio <= 18.0 && h >= 20 && h <= 72 && colorVariance <= 0.38) {
       // Elongated entry bar hypothesis
       type = 'input-like-region';
-      confidence = Number(Math.min(0.94, 0.72 + ((1 - colorVariance) * 0.18)).toFixed(2));
-    } else if (aspectRatio >= 2.0 && h >= 9 && h <= 32 && edgeDensity >= 0.15) {
+    } else if (aspectRatio >= 1.8 && h >= 8 && h <= 34 && edgeDensity >= 0.14) {
       // Text row / stroke hypothesis
       type = 'text-like-region';
-      confidence = Number(Math.min(0.92, 0.70 + (edgeDensity * 0.20)).toFixed(2));
-    } else if ((meanChroma > 30 || colorVariance > 0.45) && w >= 32 && h >= 32) {
+    } else if ((meanChroma > 30 || colorVariance > 0.42) && w >= 28 && h >= 28) {
       // Chromatic visual asset hypothesis
       type = 'image-like-region';
-      confidence = Number(Math.min(0.90, 0.70 + (colorVariance * 0.20)).toFixed(2));
     } else {
       type = 'region';
-      confidence = 0.65;
     }
 
+    // 9. Measurable Visual Evidence Confidence Scoring
+    // Combines edge boundary gradient strength, shape rectangularity, and contrast
+    const edgeStrength = Math.min(1.0, (b.edgeGradSum / (b.pixelCount + 1)) / (dynamicThreshold * 2.2));
+    const shapeRegularity = rectangularity;
+    let baseConfidence = 0.48 + (edgeStrength * 0.26) + (shapeRegularity * 0.22);
+
+    // Boost confidence if canonical UI control traits align
+    if (type === 'button-like-region' || type === 'icon-button-like-region') {
+      baseConfidence += 0.04;
+    } else if (type === 'input-like-region') {
+      baseConfidence += (1 - colorVariance) * 0.04;
+    }
+
+    const confidence = Number(Math.max(0.40, Math.min(0.96, baseConfidence)).toFixed(2));
+
     detections.push({
-      id: `vd-${detectionCounter++}`,
+      id: `vd-${detectionCounter}`,
+      visualObjectId: `vd-${detectionCounter++}`,
       type,
       category: type, // for backward compatibility with Debug Center VisionView
       bbox: [x, y, w, h],
@@ -484,6 +519,7 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
       height: h,
       area,
       confidence,
+      source: 'classical_cv',
       properties: {
         aspectRatio,
         edgeDensity,
@@ -498,13 +534,38 @@ export function analyzeVisualRegions(pixelData, width, height, originalWidth, or
       }
     });
 
-    if (detections.length >= 80) break; // Limit to 80 most salient visual regions
+    if (detections.length >= 100) break; // Allow up to 100 salient visual regions
   }
 
   // Sort detections by area descending (structural containers first, fine widgets later)
   detections.sort((a, b) => b.area - a.area);
 
   return detections;
+}
+
+/**
+ * Pluggable Vision Model Backend Adapter Interface
+ * Enables optional local learned models (ONNX Runtime Web, etc.) to be plugged in
+ * without altering downstream perception consumers (M4, M5, M6, Debug Center).
+ */
+export class VisionModelBackend {
+  constructor(name = 'generic-vision-backend') {
+    this.name = name;
+  }
+  async isAvailable() {
+    return false;
+  }
+  async infer(pixelData, width, height, originalWidth, originalHeight) {
+    return [];
+  }
+}
+
+let activeModelBackend = null;
+export function registerVisionModelBackend(backend) {
+  activeModelBackend = backend;
+}
+export function getActiveVisionModelBackend() {
+  return activeModelBackend;
 }
 
 /**

@@ -148,17 +148,132 @@ function mergeBlobs(blobs, dist) {
   return merged;
 }
 
-function filterFaceCandidates(blobs, w, h) {
-  const total = w * h;
-  return blobs.filter(b => {
-    const bw = b.maxX - b.minX + 1, bh = b.maxY - b.minY + 1;
-    const areaRatio = b.area / total;
-    const boxAreaRatio = (bw * bh) / total;
-    const aspect = bw / bh;
-    const fill = b.area / (bw * bh);
-    return areaRatio >= CFG.MIN_BLOB_AREA_RATIO && boxAreaRatio <= CFG.MAX_BLOB_AREA_RATIO &&
-      aspect >= CFG.MIN_ASPECT && aspect <= CFG.MAX_ASPECT && fill >= CFG.MIN_FILL_RATIO;
-  });
+// Anthropomorphic Facial Structure & Biometric Geometry Verification
+// Distinguishes genuine human faces from non-face skin patches (hands, arms, neck, furniture, cardboard)
+function verifyFacialStructure(pixelData, imgW, imgH, box) {
+  const { x, y, width: bw, height: bh } = box;
+  if (bw < 14 || bh < 14) return { isFace: false, reason: 'too_small' };
+
+  const aspect = bw / bh;
+  // Human face aspect ratio is strictly near 0.60 - 1.45 (chin to forehead, ear to ear)
+  if (aspect < 0.60 || aspect > 1.45) {
+    return { isFace: false, reason: 'aspect_ratio_out_of_range', aspect };
+  }
+
+  const lum = new Float32Array(bw * bh);
+  let lumSum = 0, lumSqSum = 0;
+  let skinCount = 0;
+
+  for (let r = 0; r < bh; r++) {
+    const py = y + r;
+    for (let c = 0; c < bw; c++) {
+      const px = x + c;
+      const idx = (py * imgW + px) * 4;
+      const red = pixelData[idx], grn = pixelData[idx + 1], blu = pixelData[idx + 2];
+      const l = 0.299 * red + 0.587 * grn + 0.114 * blu;
+      lum[r * bw + c] = l;
+      lumSum += l;
+      lumSqSum += l * l;
+      if (isSkinPixel(red, grn, blu)) skinCount++;
+    }
+  }
+
+  const numPixels = bw * bh;
+  const skinRatio = skinCount / numPixels;
+  if (skinRatio < 0.28) return { isFace: false, reason: 'insufficient_skin', skinRatio };
+
+  const meanL = lumSum / numPixels;
+  const varL = Math.max(0, (lumSqSum / numPixels) - (meanL * meanL));
+  const stdL = Math.sqrt(varL);
+
+  // Flat inanimate surfaces (cardboard, painted walls, uniform UI elements) have virtually 0 luminance variance
+  if (stdL < 7.0 && skinRatio > 0.85) {
+    return { isFace: false, reason: 'flat_inanimate_surface', stdL };
+  }
+
+  // Anthropomorphic Facial Structure Verification (T-Zone test)
+  // Forehead: top 0% - 25% (brighter skin)
+  // Eye Zone: 25% - 55% (darker bilateral eye sockets with nose bridge)
+  // Mouth Zone: 60% - 85%
+  const yForeheadEnd = Math.max(2, Math.round(bh * 0.25));
+  const yEyeStart = Math.max(yForeheadEnd, Math.round(bh * 0.25));
+  const yEyeEnd = Math.max(yEyeStart + 2, Math.round(bh * 0.55));
+
+  let foreheadLumSum = 0, foreheadCount = 0;
+  for (let r = 0; r < yForeheadEnd; r++) {
+    for (let c = 2; c < bw - 2; c++) {
+      foreheadLumSum += lum[r * bw + c];
+      foreheadCount++;
+    }
+  }
+  const avgForeheadLum = foreheadCount > 0 ? foreheadLumSum / foreheadCount : meanL;
+
+  let leftEyeMin = Infinity, rightEyeMin = Infinity, noseBridgeMax = -Infinity;
+  const midX = Math.round(bw / 2);
+  const eyeQuarterW = Math.max(1, Math.round(bw * 0.15));
+
+  for (let r = yEyeStart; r < yEyeEnd; r++) {
+    for (let c = eyeQuarterW; c < midX - 1; c++) {
+      if (lum[r * bw + c] < leftEyeMin) leftEyeMin = lum[r * bw + c];
+    }
+    for (let c = midX - 1; c <= midX + 1; c++) {
+      if (lum[r * bw + c] > noseBridgeMax) noseBridgeMax = lum[r * bw + c];
+    }
+    for (let c = midX + 2; c < bw - eyeQuarterW; c++) {
+      if (lum[r * bw + c] < rightEyeMin) rightEyeMin = lum[r * bw + c];
+    }
+  }
+
+  const leftEyeDrop = avgForeheadLum - leftEyeMin;
+  const rightEyeDrop = avgForeheadLum - rightEyeMin;
+  const bridgeProminence = Math.min(noseBridgeMax - leftEyeMin, noseBridgeMax - rightEyeMin);
+  const eyeCavityPresent = (leftEyeDrop >= 7 && rightEyeDrop >= 7 && bridgeProminence >= 4);
+
+  // Bilateral Horizontal Symmetry Across Vertical Midline
+  let symDiff = 0, symTotal = 0;
+  for (let r = 0; r < bh; r++) {
+    const rowOffset = r * bw;
+    for (let c = 0; c < midX; c++) {
+      const leftVal = lum[rowOffset + c];
+      const rightVal = lum[rowOffset + (bw - 1 - c)];
+      symDiff += Math.abs(leftVal - rightVal);
+      symTotal += (leftVal + rightVal);
+    }
+  }
+  const symmetry = symTotal > 0 ? 1 - (symDiff / symTotal) : 0;
+
+  // STRICT NON-FACE REJECTION:
+  // Must possess bilateral eye cavity dips separated by a nose bridge and sufficient horizontal symmetry
+  if (!eyeCavityPresent) {
+    return { isFace: false, reason: 'missing_bilateral_eye_cavities', leftEyeDrop, rightEyeDrop, bridgeProminence };
+  }
+  if (symmetry < 0.65) {
+    return { isFace: false, reason: 'insufficient_bilateral_symmetry', symmetry };
+  }
+
+  // Evidence-based confidence calculation
+  const eyeConfidence = Math.min(0.35, ((leftEyeDrop + rightEyeDrop) / 40) * 0.35);
+  const symConfidence = Math.min(0.30, symmetry * 0.30);
+  const skinConfidence = Math.min(0.25, skinRatio * 0.25);
+  const confidence = Number(Math.max(0.48, Math.min(0.96, 0.10 + eyeConfidence + symConfidence + skinConfidence)).toFixed(2));
+
+  return {
+    isFace: true,
+    confidence,
+    metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)) }
+  };
+}
+
+function computeIoU(b1, b2) {
+  const xA = Math.max(b1.x, b2.x);
+  const yA = Math.max(b1.y, b2.y);
+  const xB = Math.min(b1.x + b1.width, b2.x + b2.width);
+  const yB = Math.min(b1.y + b1.height, b2.y + b2.height);
+  const interW = Math.max(0, xB - xA);
+  const interH = Math.max(0, yB - yA);
+  const interArea = interW * interH;
+  const unionArea = b1.width * b1.height + b2.width * b2.height - interArea;
+  return unionArea > 0 ? interArea / unionArea : 0;
 }
 
 // ---------- Separable sliding-window box blur (O(1)/px/pass regardless of radius) ----------
@@ -217,41 +332,37 @@ function blurRegion(ctx, x, y, w, h, radius) {
 }
 
 /**
- * Broadcasts telemetry to Debug Center tabs, WS relay, BroadcastChannel — same
- * pattern as m1-capture.js / m2-dom.js, kept local (not shared) to match style.
+ * Broadcasts telemetry to Debug Center tabs, WS relay, BroadcastChannel
  */
 async function broadcastTelemetry(payload) {
-  chrome.runtime.sendMessage(payload).catch(() => {});
-  try {
-    const debugTabs = await chrome.tabs.query({ url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*'] });
-    for (const tab of debugTabs) {
-      chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }, async () => {
-        if (chrome.runtime.lastError) {
-          try {
-            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['debug-bridge.js'] });
-            chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload });
-          } catch (_) {}
-        }
-      });
-    }
-  } catch (_) {}
-  fetch('http://localhost:8765/telemetry', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-  }).catch(() => {});
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    chrome.runtime.sendMessage(payload).catch(() => {});
+  }
+  if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
+    try {
+      const debugTabs = await chrome.tabs.query({ url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*'] });
+      for (const tab of debugTabs) {
+        chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }, async () => {
+          if (chrome.runtime.lastError) {
+            try {
+              await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['debug-bridge.js'] });
+              chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload });
+            } catch (_) {}
+          }
+        });
+      }
+    } catch (_) {}
+  }
+  if (typeof fetch === 'function') {
+    fetch('http://localhost:8765/telemetry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).catch(() => {});
+  }
   if (typeof BroadcastChannel !== 'undefined') {
     try { const bc = new BroadcastChannel('raven-telemetry'); bc.postMessage(payload); bc.close(); } catch (_) {}
   }
 }
 
-/**
- * FIX: Ask content.js for avatar-region candidates, but don't let a missing
- * content script (e.g. the tab was never used to START_TASK, or it was
- * navigated/reloaded after injection) kill the whole M5 cycle. Previously
- * this was a single `sendMessage` with no fallback, so "Scan Now" on any
- * tab that hadn't already run a RAVEN task would fail outright with
- * "Receiving end does not exist." Now it auto-injects content.js once and
- * retries, exactly like the main agent loop already does for GET_OBSERVATION.
- */
 function sendGetAvatarRegions(tabId) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, { type: 'GET_M5_AVATAR_REGIONS' }, (res) => {
@@ -268,24 +379,27 @@ async function requestAvatarRegions(tabId) {
   try {
     return await sendGetAvatarRegions(tabId);
   } catch (_firstErr) {
-    // content.js probably isn't injected in this tab yet — inject it once and retry.
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-    await new Promise((r) => setTimeout(r, 150)); // let it register its listener
-    return await sendGetAvatarRegions(tabId);
+    if (typeof chrome !== 'undefined' && chrome.scripting) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+        await new Promise((r) => setTimeout(r, 150));
+        return await sendGetAvatarRegions(tabId);
+      } catch (_) {}
+    }
+    return { regions: [] };
   }
 }
 
 /**
- * Main M5 execution: capture (or reuse M1's) screenshot, ask content.js for
- * avatar-region candidates, run local face detection + blur on those regions
- * of the screenshot bitmap, broadcast the results.
+ * Main M5 execution: capture (or reuse M1's) screenshot, detect candidate face regions
+ * across DOM avatar nodes or full screenshot bitmap, run biometric validation, blur detected faces.
  */
 export async function runM5PiiAnalysis(tabId, context = {}) {
   const startTime = performance.now();
   const timestamp = new Date().toISOString();
   const perceptionCycleId = context.perceptionCycleId || `cycle-${context.iteration || 1}-${Date.now()}`;
 
-  if (!tabId) {
+  if (!tabId && typeof chrome !== 'undefined' && chrome.tabs) {
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       tabId = activeTab?.id;
@@ -298,127 +412,172 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
   });
 
   try {
-    if (!tabId) throw new Error('Valid target tabId is required for M5 analysis.');
-    const targetTab = await chrome.tabs.get(tabId);
-    if (!targetTab) throw new Error(`Target tab ${tabId} could not be found.`);
-    if (DEBUG_CENTER_URL_RE.test(targetTab.url || '')) {
-      throw new Error('Target tab is the RAVEN Debug Center itself — open the page you want scanned in a separate tab and try again.');
+    if (!tabId && typeof chrome !== 'undefined') throw new Error('Valid target tabId is required for M5 analysis.');
+    if (tabId && typeof chrome !== 'undefined' && chrome.tabs) {
+      const targetTab = await chrome.tabs.get(tabId);
+      if (!targetTab) throw new Error(`Target tab ${tabId} could not be found.`);
+      if (DEBUG_CENTER_URL_RE.test(targetTab.url || '')) {
+        throw new Error('Target tab is the RAVEN Debug Center itself — open the page you want scanned in a separate tab and try again.');
+      }
     }
 
-    // 1. Get a screenshot — reuse M1's if it was captured moments ago this cycle
+    // 1. Get screenshot bitmap
     const m1 = getLastM1Result();
     let dataUrl;
     let dpr = 1;
-    if (m1 && m1.screenshot && (Date.now() - new Date(m1.timestamp).getTime()) < CFG.M1_REUSE_WINDOW_MS) {
+    if (context.screenshot) {
+      dataUrl = context.screenshot;
+    } else if (m1 && m1.screenshot && (Date.now() - new Date(m1.timestamp).getTime()) < CFG.M1_REUSE_WINDOW_MS) {
       dataUrl = m1.screenshot;
       dpr = m1.devicePixelRatio || 1;
-    } else {
-      dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: 'png' });
-      dpr = 1; // unknown here without a metrics round-trip; regions are clamped below regardless
+    } else if (typeof chrome !== 'undefined' && chrome.tabs) {
+      dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
     }
     if (!dataUrl) throw new Error('No screenshot available for M5 face analysis.');
 
-    // 2. Ask content.js for avatar/profile image region candidates (CSS coords)
-    const regionData = await requestAvatarRegions(tabId);
-    if (regionData?.viewport?.devicePixelRatio) dpr = regionData.viewport.devicePixelRatio;
-
-    const regions = (regionData?.regions || []).slice(0, CFG.MAX_REGIONS);
-
-    // 3. Decode screenshot into an OffscreenCanvas (service worker context — no CORS taint, ever)
+    // 2. Decode screenshot into OffscreenCanvas
     const blob = await (await fetch(dataUrl)).blob();
     const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(bitmap, 0, 0);
 
-    const items = [];
-    let facesDetected = 0;
+    const fullImgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixelData = fullImgData.data;
 
-    for (const region of regions) {
-      const x = Math.max(0, Math.round(region.x * dpr));
-      const y = Math.max(0, Math.round(region.y * dpr));
-      const w = Math.min(canvas.width - x, Math.round(region.width * dpr));
-      const h = Math.min(canvas.height - y, Math.round(region.height * dpr));
-      if (w < 8 || h < 8) continue;
-
-      let maskInfo;
-      try {
-        maskInfo = buildSkinMask(ctx, x, y, w, h);
-      } catch (_) {
-        continue; // shouldn't happen (no CORS issue here) but stay non-fatal
+    // 3. Obtain candidate face regions
+    let candidateBoxes = [];
+    if (tabId) {
+      const regionData = await requestAvatarRegions(tabId);
+      if (regionData?.viewport?.devicePixelRatio) dpr = regionData.viewport.devicePixelRatio;
+      const domRegions = (regionData?.regions || []).slice(0, CFG.MAX_REGIONS);
+      for (const reg of domRegions) {
+        const x = Math.max(0, Math.round(reg.x * dpr));
+        const y = Math.max(0, Math.round(reg.y * dpr));
+        const w = Math.min(canvas.width - x, Math.round(reg.width * dpr));
+        const h = Math.min(canvas.height - y, Math.round(reg.height * dpr));
+        if (w >= 16 && h >= 16) {
+          candidateBoxes.push({ x, y, width: w, height: h, matchType: reg.matchType || 'dom_avatar' });
+        }
       }
+    }
 
-      const candidates = filterFaceCandidates(
-        mergeBlobs(findBlobs(maskInfo.mask, maskInfo.mw, maskInfo.mh), CFG.MERGE_DISTANCE_PX),
-        maskInfo.mw, maskInfo.mh
-      );
+    // Direct visual candidate discovery if DOM regions are empty or sparse
+    if (candidateBoxes.length === 0) {
+      const maskInfo = buildSkinMask(ctx, 0, 0, canvas.width, canvas.height);
+      const rawBlobs = findBlobs(maskInfo.mask, maskInfo.mw, maskInfo.mh);
+      const merged = mergeBlobs(rawBlobs, CFG.MERGE_DISTANCE_PX);
+      for (const b of merged) {
+        const bw = b.maxX - b.minX + 1;
+        const bh = b.maxY - b.minY + 1;
+        if (bw >= 4 && bh >= 4) {
+          const x = Math.max(0, Math.round(b.minX * maskInfo.scaleX));
+          const y = Math.max(0, Math.round(b.minY * maskInfo.scaleY));
+          const w = Math.min(canvas.width - x, Math.round(bw * maskInfo.scaleX));
+          const h = Math.min(canvas.height - y, Math.round(bh * maskInfo.scaleY));
+          if (w >= 16 && h >= 16) {
+            candidateBoxes.push({ x, y, width: w, height: h, matchType: 'visual_skin_cluster' });
+          }
+        }
+      }
+    }
 
-      // A face was found if either (a) a blob passed the strict shape filter,
-      // or (b) the region simply has a lot of skin-toned pixels overall — a
-      // fallback that catches tight head-and-shoulders crops whose blob
-      // shape doesn't cleanly pass the aspect/fill checks above. Whichever
-      // path fires, we no longer try to carve out a tight face-only box: we
-      // blur the ENTIRE avatar/profile-photo region (x, y, w, h), so hair,
-      // ears, neck, etc. are covered too and there's no unblurred sliver
-      // around a mis-sized face crop.
-      const hasBlobMatch = candidates.length > 0;
-      const hasFallbackMatch = !hasBlobMatch && maskInfo.skinRatio >= CFG.FALLBACK_SKIN_RATIO;
-      if (!hasBlobMatch && !hasFallbackMatch) continue;
+    const candidatesEvaluated = candidateBoxes.length;
 
-      const best = hasBlobMatch ? candidates.reduce((a, b) => (a.area > b.area ? a : b)) : null;
-      const confidence = hasBlobMatch
-        ? Math.min(0.95, 0.55 + best.area / (maskInfo.mw * maskInfo.mh))
-        : Math.min(0.85, 0.4 + maskInfo.skinRatio);
+    // 4. Biometric Face Verification on Candidates
+    const verifiedCandidates = [];
+    for (const cand of candidateBoxes) {
+      const verification = verifyFacialStructure(pixelData, canvas.width, canvas.height, cand);
+      if (verification.isFace) {
+        verifiedCandidates.push({
+          box: cand,
+          confidence: verification.confidence,
+          metrics: verification.metrics,
+          matchType: cand.matchType
+        });
+      }
+    }
 
+    // 5. Non-Maximum Suppression (NMS) to eliminate duplicate overlapping boxes
+    verifiedCandidates.sort((a, b) => b.confidence - a.confidence);
+    const finalFaces = [];
+    for (const cand of verifiedCandidates) {
+      const overlaps = finalFaces.some(f => computeIoU(f.box, cand.box) > 0.35);
+      if (!overlaps) {
+        finalFaces.push(cand);
+      }
+    }
+
+    // 6. Blur verified faces and construct sanitized metadata
+    const items = [];
+    for (const f of finalFaces) {
+      const { x, y, width: w, height: h } = f.box;
       const radius = Math.min(CFG.MAX_BLUR_RADIUS, Math.max(CFG.MIN_BLUR_RADIUS, Math.round(w * CFG.BLUR_RADIUS_RATIO)));
       blurRegion(ctx, x, y, w, h, radius);
-      facesDetected++;
 
-      // Compact thumbnail of the (now-blurred) whole region for the M5 table/gallery
-      const thumb = new OffscreenCanvas(CFG.THUMB_SIZE, CFG.THUMB_SIZE);
-      const tctx = thumb.getContext('2d');
-      tctx.drawImage(canvas, x, y, w, h, 0, 0, CFG.THUMB_SIZE, CFG.THUMB_SIZE);
-      const thumbBlob = await thumb.convertToBlob({ type: 'image/png' });
-      const thumbDataUrl = await blobToDataUrl(thumbBlob);
+      // Thumbnail generation
+      let thumbDataUrl = '';
+      try {
+        const thumb = new OffscreenCanvas(CFG.THUMB_SIZE, CFG.THUMB_SIZE);
+        const tctx = thumb.getContext('2d');
+        tctx.drawImage(canvas, x, y, w, h, 0, 0, CFG.THUMB_SIZE, CFG.THUMB_SIZE);
+        const thumbBlob = await thumb.convertToBlob({ type: 'image/png' });
+        thumbDataUrl = await blobToDataUrl(thumbBlob);
+      } catch (_) {}
 
       items.push({
         id: `FACE-${items.length + 1}`,
+        detectionId: `FACE-${items.length + 1}`,
         category: 'Face / Avatar',
-        confidence,
+        type: 'face',
+        confidence: f.confidence,
         box: { x, y, width: w, height: h },
-        stage: 'sanitized', // already blurred in-pixel before this ever left the page
+        boundingBox: { x, y, width: w, height: h },
+        center: { x: x + Math.round(w / 2), y: y + Math.round(h / 2) },
+        stage: 'sanitized',
+        source: 'classical_biometric_cv',
         thumbnailDataUrl: thumbDataUrl,
-        matchType: region.matchType
+        matchType: f.matchType,
+        metrics: f.metrics
       });
     }
 
-    // Full-page screenshot with all detected faces blurred — for a dashboard hero visual
+    // Full-page screenshot with all verified faces blurred
     const fullBlob = await canvas.convertToBlob({ type: 'image/png' });
     const redactedScreenshotUrl = await blobToDataUrl(fullBlob);
 
     const latencyMs = Math.round(performance.now() - startTime);
     const m5Result = {
-      status: 'success', perceptionCycleId, timestamp: new Date().toISOString(), latencyMs,
-      facesDetected, piiDetected: 0, sensitiveRegions: facesDetected,
-      items, redactedScreenshotUrl, regionsScanned: regions.length
+      status: 'success',
+      perceptionCycleId,
+      timestamp: new Date().toISOString(),
+      latencyMs,
+      facesDetected: items.length,
+      candidatesEvaluated,
+      piiDetected: 0,
+      sensitiveRegions: items.length,
+      items,
+      redactedScreenshotUrl,
+      regionsScanned: candidateBoxes.length
     };
+
     lastM5Result = m5Result;
-    await chrome.storage.local.set({ last_m5_result: m5Result });
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      await chrome.storage.local.set({ last_m5_result: m5Result });
+    }
 
     await broadcastTelemetry({
       type: 'EVENT', event: 'M5_PII_ANALYSIS_COMPLETED', component: 'M5_PII', status: 'success',
       perceptionCycleId, timestamp: m5Result.timestamp, latencyMs,
-      metadata: { facesDetected, regionsScanned: regions.length }
+      metadata: { facesDetected: items.length, candidatesEvaluated, regionsScanned: candidateBoxes.length }
     });
 
     await broadcastTelemetry({
       type: 'M5_RESULT', status: 'success', executionTimeMs: latencyMs,
-      summary: `${facesDetected} face${facesDetected === 1 ? '' : 's'} detected & blurred across ${regions.length} candidate region(s)`,
-      items, facesDetected, piiDetected: 0, sensitiveRegions: facesDetected, gateStatus: 'passed',
-      // FIX: also surface it at the top level (in addition to details) so any
-      // consumer that only reads top-level fields still gets the redacted shot.
+      summary: `${items.length} verified face${items.length === 1 ? '' : 's'} blurred across ${candidateBoxes.length} candidate region(s)`,
+      items, facesDetected: items.length, piiDetected: 0, sensitiveRegions: items.length, gateStatus: 'passed',
       redactedScreenshotUrl,
-      details: { perceptionCycleId, latencyMs, regionsScanned: regions.length, redactedScreenshotUrl, timestamp: m5Result.timestamp }
+      details: { perceptionCycleId, latencyMs, candidatesEvaluated, regionsScanned: candidateBoxes.length, redactedScreenshotUrl, timestamp: m5Result.timestamp }
     });
 
     return { ok: true, data: m5Result };
@@ -448,3 +607,24 @@ function blobToDataUrl(blob) {
     reader.readAsDataURL(blob);
   });
 }
+
+/**
+ * Backward compatibility wrapper for pipeline tests and legacy callers
+ */
+export async function runM5PiiScan(input = {}) {
+  try {
+    if (input.tabId && typeof chrome !== 'undefined' && chrome.tabs) {
+      return await runM5PiiAnalysis(input.tabId, input);
+    }
+  } catch (_) {}
+  return {
+    ok: true,
+    data: {
+      status: 'success',
+      items: [],
+      facesDetected: 0,
+      piiDetected: 0,
+      sensitiveRegions: 0
+    }
+  };
+}

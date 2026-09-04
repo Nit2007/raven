@@ -33,7 +33,13 @@ export function renderPrivacyView(container) {
 
         <div class="stat-group-row">
           <div class="stat-box">
-            <span class="stat-box-label">Faces Detected</span>
+            <span class="stat-box-label">Candidates</span>
+            <span class="stat-box-value cyan">
+              ${privacy.candidatesEvaluated ?? '—'}
+            </span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-box-label">Final Faces</span>
             <span class="stat-box-value ${privacy.facesDetected > 0 ? 'rose' : ''}">
               ${privacy.facesDetected || 0}
             </span>
@@ -45,13 +51,19 @@ export function renderPrivacyView(container) {
             </span>
           </div>
           <div class="stat-box">
-            <span class="stat-box-label">Sensitive Regions</span>
-            <span class="stat-box-value ${privacy.sensitiveRegions > 0 ? 'rose' : ''}">
-              ${privacy.sensitiveRegions || 0}
+            <span class="stat-box-label">Detector Backend</span>
+            <span class="stat-box-value" style="font-size: 13px; font-family: var(--font-mono); color: var(--text-cyan);">
+              ${privacy.backend || 'classical_biometric_cv'}
             </span>
           </div>
           <div class="stat-box">
-            <span class="stat-box-label">Gate Verification</span>
+            <span class="stat-box-label">Latency</span>
+            <span class="stat-box-value" style="font-size: 14px; font-family: var(--font-mono);">
+              ${privacy.executionTimeMs ? `${privacy.executionTimeMs}ms` : '—'}
+            </span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-box-label">Gate Status</span>
             <span class="stat-box-value emerald">
               ${privacy.gateStatus.toUpperCase()}
             </span>
@@ -104,24 +116,27 @@ export function renderPrivacyView(container) {
                     <th>Entity ID</th>
                     <th>Category</th>
                     <th>Masked Value Preview</th>
-                    <th>Confidence</th>
-                    <th>Coordinates</th>
+                    <th>Confidence & Evidence</th>
+                    <th>Coordinates [x,y,w,h]</th>
+                    <th>Source</th>
                     <th>Lifecycle Stage</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${items.map((item, idx) => {
                     const stage = item.stage || 'detected'; // detected | redacted | sanitized
+                    const m = item.metrics;
+                    const evidenceTooltip = m ? `Skin: ${Math.round(m.skinRatio * 100)}%, Depth: ${m.eyeCavityDepth ?? 'N/A'}, Sym: ${m.symmetry ?? 'N/A'}` : '';
                     return `
                       <tr>
                         <td>
                           <span class="badge-pill" style="color: var(--text-cyan);">
-                            ${item.id || `SENS-${idx + 1}`}
+                            ${item.id || item.detectionId || `SENS-${idx + 1}`}
                           </span>
                         </td>
                         <td>
                           <span class="tag-badge" style="background: rgba(244, 63, 94, 0.12); color: var(--text-rose); border-color: var(--border-rose);">
-                            ${item.category || 'PII / Sensitive'}
+                            ${item.type || item.category || 'PII / Sensitive'}
                           </span>
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 11.5px;">
@@ -132,10 +147,14 @@ export function renderPrivacyView(container) {
                           ` : item.maskedPreview ? `<code>${item.maskedPreview}</code>` : `<span style="color: var(--text-muted); font-style: italic;">[REDACTED VALUE]</span>`}
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 11px;">
-                          ${item.confidence ? Math.round(item.confidence * 100) + '%' : '—'}
+                          <span style="font-weight: 600; color: var(--text-rose);">${item.confidence ? Math.round(item.confidence * 100) + '%' : '—'}</span>
+                          ${evidenceTooltip ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">${evidenceTooltip}</div>` : ''}
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);">
-                          ${item.box ? JSON.stringify(item.box) : '—'}
+                          ${item.box ? `[${item.box.x}, ${item.box.y}, ${item.box.width}, ${item.box.height}]` : (item.boundingBox ? `[${item.boundingBox.x}, ${item.boundingBox.y}, ${item.boundingBox.width}, ${item.boundingBox.height}]` : '—')}
+                        </td>
+                        <td style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);">
+                          ${item.source || 'classical_biometric_cv'}
                         </td>
                         <td>
                           <div class="pii-status-flow">
