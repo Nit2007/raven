@@ -19,6 +19,8 @@
       chrome.runtime.sendMessage({ type: 'TRIGGER_M1' });
     } else if (event.data && event.data.type === 'RAVEN_TRIGGER_M2') {
       chrome.runtime.sendMessage({ type: 'TRIGGER_M2' });
+    } else if (event.data && event.data.type === 'RAVEN_TRIGGER_M5') {
+      chrome.runtime.sendMessage({ type: 'TRIGGER_M5' });
     }
   });
 })();

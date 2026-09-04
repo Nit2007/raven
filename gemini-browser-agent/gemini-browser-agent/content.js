@@ -553,6 +553,61 @@
     };
   }
 
+  // --- Milestone M5: Avatar/Profile Image Region Discovery ---
+  // Only discovers candidate BOUNDING BOXES here (no pixel access, no canvas).
+  // The actual face detection + blur happens in the background service
+  // worker on top of the M1 viewport screenshot (see m5-pii.js) — this keeps
+  // content.js free of any cross-origin canvas taint concerns entirely.
+  const AVATAR_SELECTOR = [
+    'img[class*="avatar" i]', 'img[id*="avatar" i]',
+    'img[class*="profile" i]', 'img[id*="profile" i]',
+    'img[alt*="avatar" i]', 'img[alt*="profile" i]',
+    'img[alt*="photo" i]', '[class*="avatar" i] img',
+    '[class*="profile-pic" i] img', '[class*="user-photo" i] img'
+  ].join(',');
+
+  function findAvatarRegions() {
+    const vpWidth = window.innerWidth;
+    const vpHeight = window.innerHeight;
+    const seen = new Set();
+    const regions = [];
+
+    function pushCandidate(img, matchType) {
+      if (seen.has(img)) return;
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 16 || rect.height < 16) return;
+      if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= vpWidth || rect.top >= vpHeight) return;
+      const aspect = rect.width / rect.height;
+      if (aspect < 0.4 || aspect > 2.5) return;
+      seen.add(img);
+      regions.push({
+        id: assignId(img),
+        x: Math.max(0, Math.round(rect.left)),
+        y: Math.max(0, Math.round(rect.top)),
+        width: Math.round(Math.min(rect.width, vpWidth - rect.left)),
+        height: Math.round(Math.min(rect.height, vpHeight - rect.top)),
+        matchType,
+        alt: img.getAttribute('alt') || ''
+      });
+    }
+
+    document.querySelectorAll(AVATAR_SELECTOR).forEach((img) => pushCandidate(img, 'explicit'));
+
+    const allImgs = Array.from(document.querySelectorAll('img'));
+    for (const img of allImgs) {
+      if (regions.length >= 12) break;
+      if (seen.has(img)) continue;
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 24 || rect.width > 400 || rect.height < 24 || rect.height > 400) continue;
+      pushCandidate(img, 'heuristic');
+    }
+
+    return {
+      viewport: { width: vpWidth, height: vpHeight, devicePixelRatio: window.devicePixelRatio || 1 },
+      regions: regions.slice(0, 12)
+    };
+  }
+
   function onMessage(msg, sender, sendResponse) {
     (async () => {
       try {
@@ -562,6 +617,10 @@
             ok: true,
             data: domAnalysis
           });
+          return;
+        }
+        if (msg.type === 'GET_M5_AVATAR_REGIONS') {
+          sendResponse({ ok: true, data: findAvatarRegions() });
           return;
         }
         if (msg.type === 'GET_VIEWPORT_METRICS') {
@@ -578,9 +637,6 @@
           return;
         }
         if (msg.type === 'GET_OBSERVATION') {
-          if (msg.observationVersion) {
-            currentObservationVersion = msg.observationVersion;
-          }
           const elements = extractElements();
           const pageHash = computeSemanticHash(elements);
           sendResponse({
@@ -590,14 +646,12 @@
               title: document.title,
               elements,
               visibleText: extractVisibleText(),
-              pageHash,
-              observationVersion: currentObservationVersion,
-              domFingerprint: `${elements.length}:${pageHash}`
+              pageHash
             }
           });
         } else if (msg.type === 'EXECUTE_ACTION') {
           await executeAction(msg.action);
-          sendResponse({ ok: true, urlAfter: location.href });
+          sendResponse({ ok: true });
         } else {
           sendResponse({ ok: false, error: `Unknown message type: ${msg.type}` });
         }
