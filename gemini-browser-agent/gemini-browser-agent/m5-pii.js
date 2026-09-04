@@ -28,17 +28,19 @@ export function getLastM5Result() {
 // ---------- Config ----------
 const CFG = {
   MAX_REGIONS: 12,
-  DOWNSCALE_WIDTH: 64,          // per-region mask resolution for speed
-  MIN_BLOB_AREA_RATIO: 0.02,
-  MAX_BLOB_AREA_RATIO: 0.92,
-  MIN_ASPECT: 0.5,
-  MAX_ASPECT: 1.8,
-  MERGE_DISTANCE_PX: 3,
+  DOWNSCALE_WIDTH: 96,          // per-region mask resolution (raised from 64 for better recall)
+  MIN_BLOB_AREA_RATIO: 0.012,   // lowered so smaller/partial faces still register
+  MAX_BLOB_AREA_RATIO: 0.95,
+  MIN_ASPECT: 0.4,
+  MAX_ASPECT: 2.2,
+  MIN_FILL_RATIO: 0.28,         // how "solid" a blob must be to count as a face candidate
+  FALLBACK_SKIN_RATIO: 0.22,    // whole-region skin coverage that counts as "probably a face" even if no blob passes the strict filter
+  MERGE_DISTANCE_PX: 4,
   PADDING_RATIO: 0.28,
   BLUR_PASSES: 4,
-  BLUR_RADIUS_RATIO: 0.18,
-  MIN_BLUR_RADIUS: 6,
-  MAX_BLUR_RADIUS: 40,
+  BLUR_RADIUS_RATIO: 0.32,      // higher ratio since we now blur the whole avatar region, not a tight face crop
+  MIN_BLUR_RADIUS: 8,
+  MAX_BLUR_RADIUS: 48,
   THUMB_SIZE: 120,
   M1_REUSE_WINDOW_MS: 4000       // reuse M1's screenshot if captured this recently
 };
@@ -49,14 +51,28 @@ const CFG = {
 // background.js's target-tab resolution without going through it).
 const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
 
-// ---------- Skin-tone chrominance classifier (RGB heuristic, Kovac et al.) ----------
+// ---------- Skin-tone classifier ----------
+// Two independent tests combined with OR: the original RGB heuristic
+// (Kovac et al.) PLUS a YCbCr chrominance-range test (Chai & Ngan / widely
+// used in OpenCV-style skin detectors). YCbCr separates luma (lighting)
+// from chroma (color), so it holds up much better across different skin
+// tones and lighting conditions than RGB rules alone — this is the main
+// accuracy fix, since the old single-heuristic version both missed a lot
+// of real faces (false negatives on darker/warmer lighting) and lit up on
+// non-face skin-colored backgrounds (false positives).
 function isSkinPixel(r, g, b) {
   const maxC = Math.max(r, g, b);
   const minC = Math.min(r, g, b);
   const spread = maxC - minC;
   const uniformLight = r > 95 && g > 40 && b > 20 && spread > 15 && Math.abs(r - g) > 15 && r > g && r > b;
   const lateralLight = r > 220 && g > 210 && b > 170 && Math.abs(r - g) <= 15 && r > b && g > b;
-  return uniformLight || lateralLight;
+  if (uniformLight || lateralLight) return true;
+
+  // YCbCr chrominance test — catches tones the RGB rule above misses.
+  const y = 0.299 * r + 0.587 * g + 0.114 * b;
+  const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+  const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+  return y > 40 && cb >= 77 && cb <= 135 && cr >= 133 && cr <= 180;
 }
 
 function buildSkinMask(ctx, x, y, w, h) {
@@ -70,10 +86,11 @@ function buildSkinMask(ctx, x, y, w, h) {
   const data = sctx.getImageData(0, 0, mw, mh).data;
 
   const mask = new Uint8Array(mw * mh);
+  let skinCount = 0;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    if (isSkinPixel(data[i], data[i + 1], data[i + 2])) mask[p] = 1;
+    if (isSkinPixel(data[i], data[i + 1], data[i + 2])) { mask[p] = 1; skinCount++; }
   }
-  return { mask, mw, mh, scaleX: w / mw, scaleY: h / mh };
+  return { mask, mw, mh, scaleX: w / mw, scaleY: h / mh, skinRatio: skinCount / (mw * mh) };
 }
 
 function findBlobs(mask, w, h) {
@@ -140,7 +157,7 @@ function filterFaceCandidates(blobs, w, h) {
     const aspect = bw / bh;
     const fill = b.area / (bw * bh);
     return areaRatio >= CFG.MIN_BLOB_AREA_RATIO && boxAreaRatio <= CFG.MAX_BLOB_AREA_RATIO &&
-      aspect >= CFG.MIN_ASPECT && aspect <= CFG.MAX_ASPECT && fill >= 0.35;
+      aspect >= CFG.MIN_ASPECT && aspect <= CFG.MAX_ASPECT && fill >= CFG.MIN_FILL_RATIO;
   });
 }
 
@@ -335,34 +352,40 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
         mergeBlobs(findBlobs(maskInfo.mask, maskInfo.mw, maskInfo.mh), CFG.MERGE_DISTANCE_PX),
         maskInfo.mw, maskInfo.mh
       );
-      if (candidates.length === 0) continue;
 
-      // Treat the whole region as one face box (avatar photos are single-subject)
-      const best = candidates.reduce((a, b) => (a.area > b.area ? a : b));
-      const bw = best.maxX - best.minX + 1, bh = best.maxY - best.minY + 1;
-      const padX = bw * CFG.PADDING_RATIO, padY = bh * CFG.PADDING_RATIO;
+      // A face was found if either (a) a blob passed the strict shape filter,
+      // or (b) the region simply has a lot of skin-toned pixels overall — a
+      // fallback that catches tight head-and-shoulders crops whose blob
+      // shape doesn't cleanly pass the aspect/fill checks above. Whichever
+      // path fires, we no longer try to carve out a tight face-only box: we
+      // blur the ENTIRE avatar/profile-photo region (x, y, w, h), so hair,
+      // ears, neck, etc. are covered too and there's no unblurred sliver
+      // around a mis-sized face crop.
+      const hasBlobMatch = candidates.length > 0;
+      const hasFallbackMatch = !hasBlobMatch && maskInfo.skinRatio >= CFG.FALLBACK_SKIN_RATIO;
+      if (!hasBlobMatch && !hasFallbackMatch) continue;
 
-      const fx = Math.max(0, x + Math.round((best.minX - padX) * maskInfo.scaleX));
-      const fy = Math.max(0, y + Math.round((best.minY - padY) * maskInfo.scaleY));
-      const fw = Math.min(canvas.width - fx, Math.round((bw + 2 * padX) * maskInfo.scaleX));
-      const fh = Math.min(canvas.height - fy, Math.round((bh + 2 * padY) * maskInfo.scaleY));
+      const best = hasBlobMatch ? candidates.reduce((a, b) => (a.area > b.area ? a : b)) : null;
+      const confidence = hasBlobMatch
+        ? Math.min(0.95, 0.55 + best.area / (maskInfo.mw * maskInfo.mh))
+        : Math.min(0.85, 0.4 + maskInfo.skinRatio);
 
-      const radius = Math.min(CFG.MAX_BLUR_RADIUS, Math.max(CFG.MIN_BLUR_RADIUS, Math.round(fw * CFG.BLUR_RADIUS_RATIO)));
-      blurRegion(ctx, fx, fy, fw, fh, radius);
+      const radius = Math.min(CFG.MAX_BLUR_RADIUS, Math.max(CFG.MIN_BLUR_RADIUS, Math.round(w * CFG.BLUR_RADIUS_RATIO)));
+      blurRegion(ctx, x, y, w, h, radius);
       facesDetected++;
 
-      // Compact thumbnail of the (now-blurred) crop for the M5 table/gallery
+      // Compact thumbnail of the (now-blurred) whole region for the M5 table/gallery
       const thumb = new OffscreenCanvas(CFG.THUMB_SIZE, CFG.THUMB_SIZE);
       const tctx = thumb.getContext('2d');
-      tctx.drawImage(canvas, fx, fy, fw, fh, 0, 0, CFG.THUMB_SIZE, CFG.THUMB_SIZE);
+      tctx.drawImage(canvas, x, y, w, h, 0, 0, CFG.THUMB_SIZE, CFG.THUMB_SIZE);
       const thumbBlob = await thumb.convertToBlob({ type: 'image/png' });
       const thumbDataUrl = await blobToDataUrl(thumbBlob);
 
       items.push({
         id: `FACE-${items.length + 1}`,
         category: 'Face / Avatar',
-        confidence: Math.min(0.95, 0.5 + best.area / (maskInfo.mw * maskInfo.mh)),
-        box: { x: fx, y: fy, width: fw, height: fh },
+        confidence,
+        box: { x, y, width: w, height: h },
         stage: 'sanitized', // already blurred in-pixel before this ever left the page
         thumbnailDataUrl: thumbDataUrl,
         matchType: region.matchType
