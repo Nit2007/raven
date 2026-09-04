@@ -62,6 +62,30 @@ m3Btn?.addEventListener('click', async () => {
   });
 });
 
+// FIX: There was previously no manual M5 trigger anywhere that was guaranteed
+// to target the right tab — the Debug Center's "Scan Now" button fires from
+// localhost:5173, so it always operated on whatever tab was focused (often
+// the Debug Center itself). The popup, by contrast, only ever opens on top
+// of the tab you're currently looking at, so this button always scans the
+// right page.
+const m5Btn = document.getElementById('m5Btn');
+m5Btn?.addEventListener('click', async () => {
+  activeTabId = await getActiveTabId();
+  if (activeTabId == null) return;
+  m5Btn.disabled = true;
+  m5Btn.textContent = 'Scanning...';
+  chrome.runtime.sendMessage({ type: 'TRIGGER_M5', tabId: activeTabId }, (res) => {
+    m5Btn.disabled = false;
+    m5Btn.textContent = 'Scan M5';
+    if (!res?.ok) {
+      statusEl.textContent = `M5 Error: ${res?.error || 'Face/PII scan failed'}`;
+    } else {
+      const d = res.data;
+      statusEl.textContent = `M5 Privacy: ${d?.facesDetected || 0} face(s) blurred across ${d?.regionsScanned || 0} region(s) — ${d?.latencyMs}ms`;
+    }
+  });
+});
+
 optionsLink.addEventListener('click', (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();

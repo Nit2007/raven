@@ -107,17 +107,22 @@ class RavenStore {
         activeLayer: 'annotated',
         sourceScreenshotUrl: null
       },
-      ocr: {
-        blocks: [],
-        totalWords: 0,
-        averageConfidence: 0
-      },
       privacy: {
         items: [],
         facesDetected: 0,
         piiDetected: 0,
         sensitiveRegions: 0,
-        gateStatus: PRIVACY_GATE_STATUS.WAITING
+        gateStatus: PRIVACY_GATE_STATUS.WAITING,
+        // FIX: previously missing from initial state. This is the M5-redacted
+        // (faces-blurred) full-page screenshot URL — VisionView prefers it
+        // over the raw M1/M3 screenshot so the dashboard never shows an
+        // un-redacted frame. See telemetryReceiver.js's M5_RESULT handler.
+        screenshotUrl: null
+      },
+      ocr: {
+        blocks: [],
+        totalWords: 0,
+        averageConfidence: 0
       },
       fusion: {
         inputsReceived: [],

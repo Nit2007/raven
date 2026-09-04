@@ -43,6 +43,12 @@ const CFG = {
   M1_REUSE_WINDOW_MS: 4000       // reuse M1's screenshot if captured this recently
 };
 
+// FIX: matches background.js's DEBUG_CENTER_URL_RE — defensively refuse to
+// run face detection against the Debug Center's own tab (it has nothing to
+// blur, and shows up as "0 faces" mysteriously if a caller ever slips past
+// background.js's target-tab resolution without going through it).
+const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
+
 // ---------- Skin-tone chrominance classifier (RGB heuristic, Kovac et al.) ----------
 function isSkinPixel(r, g, b) {
   const maxC = Math.max(r, g, b);
@@ -221,6 +227,38 @@ async function broadcastTelemetry(payload) {
 }
 
 /**
+ * FIX: Ask content.js for avatar-region candidates, but don't let a missing
+ * content script (e.g. the tab was never used to START_TASK, or it was
+ * navigated/reloaded after injection) kill the whole M5 cycle. Previously
+ * this was a single `sendMessage` with no fallback, so "Scan Now" on any
+ * tab that hadn't already run a RAVEN task would fail outright with
+ * "Receiving end does not exist." Now it auto-injects content.js once and
+ * retries, exactly like the main agent loop already does for GET_OBSERVATION.
+ */
+function sendGetAvatarRegions(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: 'GET_M5_AVATAR_REGIONS' }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.ok) {
+        reject(new Error(chrome.runtime.lastError?.message || res?.error || 'No response from content script for M5 regions'));
+      } else {
+        resolve(res.data);
+      }
+    });
+  });
+}
+
+async function requestAvatarRegions(tabId) {
+  try {
+    return await sendGetAvatarRegions(tabId);
+  } catch (_firstErr) {
+    // content.js probably isn't injected in this tab yet — inject it once and retry.
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    await new Promise((r) => setTimeout(r, 150)); // let it register its listener
+    return await sendGetAvatarRegions(tabId);
+  }
+}
+
+/**
  * Main M5 execution: capture (or reuse M1's) screenshot, ask content.js for
  * avatar-region candidates, run local face detection + blur on those regions
  * of the screenshot bitmap, broadcast the results.
@@ -246,6 +284,9 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     if (!tabId) throw new Error('Valid target tabId is required for M5 analysis.');
     const targetTab = await chrome.tabs.get(tabId);
     if (!targetTab) throw new Error(`Target tab ${tabId} could not be found.`);
+    if (DEBUG_CENTER_URL_RE.test(targetTab.url || '')) {
+      throw new Error('Target tab is the RAVEN Debug Center itself — open the page you want scanned in a separate tab and try again.');
+    }
 
     // 1. Get a screenshot — reuse M1's if it was captured moments ago this cycle
     const m1 = getLastM1Result();
@@ -261,15 +302,7 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     if (!dataUrl) throw new Error('No screenshot available for M5 face analysis.');
 
     // 2. Ask content.js for avatar/profile image region candidates (CSS coords)
-    const regionData = await new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tabId, { type: 'GET_M5_AVATAR_REGIONS' }, (res) => {
-        if (chrome.runtime.lastError || !res || !res.ok) {
-          reject(new Error(chrome.runtime.lastError?.message || res?.error || 'No response from content script for M5 regions'));
-        } else {
-          resolve(res.data);
-        }
-      });
-    });
+    const regionData = await requestAvatarRegions(tabId);
     if (regionData?.viewport?.devicePixelRatio) dpr = regionData.viewport.devicePixelRatio;
 
     const regions = (regionData?.regions || []).slice(0, CFG.MAX_REGIONS);
@@ -359,6 +392,9 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
       type: 'M5_RESULT', status: 'success', executionTimeMs: latencyMs,
       summary: `${facesDetected} face${facesDetected === 1 ? '' : 's'} detected & blurred across ${regions.length} candidate region(s)`,
       items, facesDetected, piiDetected: 0, sensitiveRegions: facesDetected, gateStatus: 'passed',
+      // FIX: also surface it at the top level (in addition to details) so any
+      // consumer that only reads top-level fields still gets the redacted shot.
+      redactedScreenshotUrl,
       details: { perceptionCycleId, latencyMs, regionsScanned: regions.length, redactedScreenshotUrl, timestamp: m5Result.timestamp }
     });
 

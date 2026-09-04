@@ -22,6 +22,57 @@ async function setTaskState(tabId, state) {
   await chrome.storage.local.set({ [`task_${tabId}`]: state });
 }
 
+// --- Target Tab Resolution ---------------------------------------------
+// FIX: Manual triggers (the "Scan Now" / M1 / M2 buttons in the Debug
+// Center) fire from localhost:5173. Whoever clicks them is LOOKING AT the
+// Debug Center tab at that moment, so `chrome.tabs.query({active:true,
+// lastFocusedWindow:true})` used to resolve to the Debug Center itself
+// instead of the page you actually want scanned — that's why "Scan Now"
+// found ~0 faces or errored out. This resolves the real target instead:
+//   1. The tab a RAVEN task/loop is currently running on (most reliable —
+//      that IS the page being monitored).
+//   2. Otherwise, the most recently active tab that ISN'T the Debug Center.
+//   3. Last resort: old behavior (active tab in the focused window).
+const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
+
+async function resolveTargetTabId(explicitTabId) {
+  if (explicitTabId) return explicitTabId;
+
+  // 1. Prefer the tab a RAVEN task/loop is actively running on.
+  try {
+    const all = await chrome.storage.local.get(null);
+    for (const [key, state] of Object.entries(all)) {
+      if (key.startsWith('task_') && state && state.status === 'running' && !state.stopped) {
+        const tid = parseInt(key.replace('task_', ''), 10);
+        if (!Number.isNaN(tid)) {
+          try {
+            await chrome.tabs.get(tid); // throws if the tab no longer exists
+            return tid;
+          } catch (_) {
+            // tab closed since; keep looking at other running tasks
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2. Fall back to the most recently active tab that ISN'T the Debug Center.
+  try {
+    const active = await chrome.tabs.query({ active: true });
+    const nonDebugCenter = active.find((t) => !DEBUG_CENTER_URL_RE.test(t.url || ''));
+    if (nonDebugCenter) return nonDebugCenter.id;
+  } catch (_) {}
+
+  // 3. Last resort: whatever's active in the focused window (may still be
+  //    the Debug Center if nothing else is open).
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return activeTab?.id;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 // --- Message Handling ---
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handleMessage(msg, sender)
@@ -37,33 +88,15 @@ async function handleMessage(msg) {
     case 'STOP_TASK':
       return stopTask(msg.tabId);
     case 'TRIGGER_M1': {
-      let tabId = msg.tabId;
-      if (!tabId) {
-        try {
-          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-          tabId = activeTab?.id;
-        } catch (_) {}
-      }
+      const tabId = await resolveTargetTabId(msg.tabId);
       return captureViewportM1(tabId);
     }
     case 'TRIGGER_M2': {
-      let tabId = msg.tabId;
-      if (!tabId) {
-        try {
-          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-          tabId = activeTab?.id;
-        } catch (_) {}
-      }
+      const tabId = await resolveTargetTabId(msg.tabId);
       return runM2DomAnalysis(tabId);
     }
     case 'TRIGGER_M5': {
-      let tabId = msg.tabId;
-      if (!tabId) {
-        try {
-          const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-          tabId = activeTab?.id;
-        } catch (_) {}
-      }
+      const tabId = await resolveTargetTabId(msg.tabId);
       return runM5PiiAnalysis(tabId);
     }
     case 'GET_STATUS':
