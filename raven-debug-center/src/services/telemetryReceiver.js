@@ -280,6 +280,19 @@ class TelemetryReceiver {
         });
         break;
 
+      case 'TASK_START':
+      case 'TASK_UPDATE':
+      case 'AGENT_TASK':
+        store.updateAgentTelemetry({
+          task: data.task || data.payload?.task || data.userTask,
+          iteration: data.iteration ?? 0,
+          status: data.status || 'running'
+        });
+        if (data.task || data.payload?.task) {
+          store.updateBrowserState({ userTask: data.task || data.payload?.task });
+        }
+        break;
+
       case 'AGENT_TELEMETRY':
       case 'GEMINI_DECISION':
         store.updateAgentTelemetry(data.payload || data);

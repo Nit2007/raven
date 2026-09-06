@@ -1,3 +1,4 @@
+import { renderLiveInteractionView } from './components/LiveInteractionView.js';
 /**
  * RAVEN Debug Center — Application Entry Point
  * Orchestrates views, mounts UI components, and connects the telemetry receiver.
@@ -23,7 +24,9 @@ import { renderConnectionModal } from './components/ConnectionModal.js';
 let activeView = 'overview';
 
 const viewRenderers = {
-  overview: renderOverviewView,
+  overview: renderLiveInteractionView,
+  interaction: renderLiveInteractionView,
+  legacyOverview: renderOverviewView,
   pipeline: renderPipelineView,
   browser: renderLiveBrowserView,
   dom: renderDomView,

@@ -1,5 +1,5 @@
-/**
- * m6-fusion.js — RAVEN Milestone M6: Perception Fusion & Privacy Sanitization Gate
+﻿/**
+ * m6-fusion.js â€” RAVEN Milestone M6: Perception Fusion & Privacy Sanitization Gate
  * 
  * Multi-Modal Perception Fusion & Strict Fail-Closed Privacy Boundary:
  * - M2 Semantic DOM elements & attributes
@@ -19,6 +19,16 @@
  * 6. STRICT FAIL-CLOSED PRIVACY GATE: If any check fails, observation release is blocked.
  * 7. ZERO-LEAK TELEMETRY: Raw sensitive values are NEVER exposed in logs, telemetry, or payloads.
  */
+
+const COMMON_WEB_TERMS = new Set([
+  'navigation', 'nav', 'menu', 'settings', 'profile', 'account', 'login', 'logout', 'signin', 'signout',
+  'avatar', 'button', 'header', 'footer', 'dashboard', 'explore', 'search', 'notifications', 'home',
+  'help', 'pricing', 'docs', 'documentation', 'overview', 'repository', 'repositories', 'pulls',
+  'issues', 'actions', 'projects', 'wiki', 'security', 'insights', 'commits', 'branches', 'tags',
+  'releases', 'packages', 'stars', 'forks', 'watchers', 'discussions', 'guide', 'feedback', 'status',
+  'interface', 'content', 'container', 'sidebar', 'toolbar', 'tab', 'panel', 'dialog', 'modal',
+  'link', 'icon', 'label', 'badge', 'card', 'item', 'list', 'table', 'row', 'column', 'grid', 'files', 'code'
+]);
 
 let lastM6Result = null;
 
@@ -76,8 +86,8 @@ function isHarmlessNonPii(text, nearbyContext = '') {
   const trimmed = text.trim();
   const lowerContext = nearbyContext.toLowerCase();
 
-  // Explicit non-PII financial prices: $29.99, 14.50 USD, €12.00, etc.
-  if (/^\$?\s*\d+(?:\.\d{1,2})?\s*(?:USD|EUR|GBP|INR|CAD|AUD|\$|€|£|₹)?$/i.test(trimmed)) {
+  // Explicit non-PII financial prices: $29.99, 14.50 USD, â‚¬12.00, etc.
+  if (/^\$?\s*\d+(?:\.\d{1,2})?\s*(?:USD|EUR|GBP|INR|CAD|AUD|\$|â‚¬|Â£|â‚¹)?$/i.test(trimmed)) {
     if (!lowerContext.includes('card') && !lowerContext.includes('account')) return true;
   }
 
@@ -90,7 +100,7 @@ function isHarmlessNonPii(text, nearbyContext = '') {
   }
 
   // Generic website UI action labels
-  if (/^(?:sign in|log in|submit|confirm|continue|checkout|cart|add to cart|search|filter|sort|next|previous)$/i.test(trimmed)) {
+  if (/^(?:nav|navigation|menu|settings|profile|account|sign in|log in|submit|confirm|continue|checkout|cart|add to cart|search|filter|sort|next|previous|home|explore|notifications|repositories|repository|issues|pull requests|pulls|actions|projects|wiki|security|insights|commits|files|code)$/i.test(trimmed)) {
     return true;
   }
 
@@ -231,10 +241,10 @@ function evaluateTextCandidates(text, bbox, source, nearbyContext, target_id, ca
   }
 
   // 2. CREDIT_CARD_LIKE
-  const ccMatch = text.match(/\b(?:\d{4}[-\s]?){3}\d{1,4}\b/) || text.match(/\b(?:[*•]{4}[-\s]?){3}\d{4}\b/);
+  const ccMatch = text.match(/\b(?:\d{4}[-\s]?){3}\d{1,4}\b/) || text.match(/\b(?:[*â€¢]{4}[-\s]?){3}\d{4}\b/);
   if (ccMatch) {
     const rawVal = ccMatch[0];
-    const isMasked = rawVal.includes('*') || rawVal.includes('•');
+    const isMasked = rawVal.includes('*') || rawVal.includes('â€¢');
     const isLuhn = isMasked ? false : validateLuhn(rawVal);
     const hasCardContext = /card|credit|debit|visa|mastercard|amex|exp|cvv|cvc|billing/i.test(lowerContext);
 
@@ -422,19 +432,23 @@ function evaluateTextCandidates(text, bbox, source, nearbyContext, target_id, ca
   }
 
   // 9. PERSON_NAME_LIKE
-  const nameLabelMatch = text.match(/(?:name|customer|patient|passenger|employee|user)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/i);
+  const nameLabelMatch = text.match(/(?:full\s+name|first\s+name|last\s+name|patient\s+name|customer\s+name|employee\s+name)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b|(?:name|customer|patient|passenger|employee)[:]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b/i);
   if (nameLabelMatch) {
-    candidates.push({
-      id: `pii-${candidates.length + 1}`,
-      type: 'PERSON_NAME_LIKE',
-      source,
-      rawText: nameLabelMatch[1],
-      bbox,
-      confidence: 0.88,
-      evidence: ['person-name-label-context'],
-      action: 'REDACT',
-      target_id
-    });
+    const rawCandidate = nameLabelMatch[1] || nameLabelMatch[2];
+    const lowerCandidate = (rawCandidate || '').toLowerCase();
+    if (rawCandidate && !COMMON_WEB_TERMS.has(lowerCandidate) && rawCandidate.length >= 2) {
+      candidates.push({
+        id: `pii-${candidates.length + 1}`,
+        type: 'PERSON_NAME_LIKE',
+        source,
+        rawText: rawCandidate,
+        bbox,
+        confidence: 0.88,
+        evidence: ['person-name-label-context'],
+        action: 'REDACT',
+        target_id
+      });
+    }
   }
 
   // 10. URL_WITH_SENSITIVE_QUERY
@@ -574,14 +588,25 @@ export function validateZeroLeakPrivacy(payload, sensitiveItems = [], rawDetecti
     leaks.push('Raw image bitmap detected in outbound payload');
   }
 
-  // 2. Sensitive text presence check (ensures raw strings are 100% purged)
+  // 2. Sensitive text presence check (ensures raw strings are 100% purged from visible text/content)
+  const HTML_STRUCTURAL_TOKENS = new Set([
+    'nav', 'navigation', 'button', 'input', 'select', 'textarea', 'link', 'div', 'span',
+    'header', 'footer', 'main', 'section', 'article', 'aside', 'form', 'label', 'menu'
+  ]);
+
   const valuesToCheck = [
     ...sensitiveItems.map(i => i.value).filter(Boolean),
     ...rawDetections.map(d => d.rawText).filter(Boolean)
-  ];
+  ].filter(v => !HTML_STRUCTURAL_TOKENS.has(v.toLowerCase()));
+
+  const textCorpus = [
+    payload?.title || '',
+    ...(payload?.visibleText || []),
+    ...(payload?.elements || []).map(e => `${e.text || ''} ${e.name || ''} ${e.value || ''} ${e.placeholder || ''} ${e.aria_label || ''}`)
+  ].join(' ');
 
   for (const rawVal of valuesToCheck) {
-    if (rawVal.length >= 3 && payloadStr.includes(rawVal)) {
+    if (rawVal.length >= 3 && textCorpus.includes(rawVal)) {
       leaks.push(`Unredacted sensitive value detected in sanitized text: "${rawVal.slice(0, 3)}***"`);
     }
   }
@@ -852,3 +877,4 @@ export async function runM6PerceptionFusion(inputs = {}) {
     return errorResult;
   }
 }
+

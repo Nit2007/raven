@@ -1,3 +1,28 @@
+// --- Minimal Presentation-Layer Telemetry Forwarder ---
+async function broadcastAgentTelemetry(payload) {
+  try {
+    chrome.runtime.sendMessage(payload).catch(() => {});
+    const debugTabs = await chrome.tabs.query({
+      url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*']
+    });
+    for (const tab of debugTabs) {
+      chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }).catch(() => {});
+    }
+  } catch (_) {}
+  try {
+    fetch('http://localhost:8765/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  } catch (_) {}
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      new BroadcastChannel('raven-telemetry').postMessage(payload);
+    }
+  } catch (_) {}
+}
+
 import { GeminiClient } from './gemini-client.js';
 import { captureViewportM1 } from './m1-capture.js';
 import { runM2DomAnalysis } from './m2-dom.js';
@@ -152,6 +177,12 @@ async function startTask(tabId, task) {
     lastElement: null
   };
   await setTaskState(tabId, initialState);
+  broadcastAgentTelemetry({
+    type: 'TASK_START',
+    task: task.trim(),
+    iteration: 0,
+    status: 'running'
+  });
   
   runLoop(tabId); 
   return { ok: true };

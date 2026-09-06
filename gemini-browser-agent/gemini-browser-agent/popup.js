@@ -1,3 +1,15 @@
+﻿const gearBtn = document.getElementById('gearBtn');
+gearBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
+});
+
+const brandLogo = document.getElementById('brandLogo');
+brandLogo?.addEventListener('error', () => {
+  brandLogo.style.display = 'none';
+  const fallback = document.querySelector('.brand-logo-fallback');
+  if (fallback) fallback.style.display = 'block';
+});
 const taskEl = document.getElementById('task');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -22,7 +34,7 @@ m1Btn?.addEventListener('click', async () => {
       statusEl.textContent = `M1 Error: ${res?.error || 'Capture failed'}`;
     } else {
       const v = res.data?.viewport;
-      statusEl.textContent = `M1 Viewport: ${v?.width}×${v?.height} (${v?.ratio || v?.aspectRatio}) — ${res.data?.latencyMs}ms`;
+      statusEl.textContent = `M1 Viewport: ${v?.width}Ã—${v?.height} (${v?.ratio || v?.aspectRatio}) â€” ${res.data?.latencyMs}ms`;
     }
   });
 });
@@ -39,7 +51,7 @@ m2Btn?.addEventListener('click', async () => {
       statusEl.textContent = `M2 Error: ${res?.error || 'Analysis failed'}`;
     } else {
       const c = res.data?.counts;
-      statusEl.textContent = `M2 DOM: ${c?.total} elements (${c?.interactive} interactive, ${c?.visible} visible) — ${res.data?.latencyMs}ms`;
+      statusEl.textContent = `M2 DOM: ${c?.total} elements (${c?.interactive} interactive, ${c?.visible} visible) â€” ${res.data?.latencyMs}ms`;
     }
   });
 });
@@ -57,13 +69,13 @@ m3Btn?.addEventListener('click', async () => {
       statusEl.textContent = `M3 Error: ${res?.error || 'Vision analysis failed'}`;
     } else {
       const d = res.data;
-      statusEl.textContent = `M3 Vision: ${d?.totalDetections || 0} regions (${d?.detector}) — ${d?.processingTimeMs}ms`;
+      statusEl.textContent = `M3 Vision: ${d?.totalDetections || 0} regions (${d?.detector}) â€” ${d?.processingTimeMs}ms`;
     }
   });
 });
 
 // FIX: There was previously no manual M5 trigger anywhere that was guaranteed
-// to target the right tab — the Debug Center's "Scan Now" button fires from
+// to target the right tab â€” the Debug Center's "Scan Now" button fires from
 // localhost:5173, so it always operated on whatever tab was focused (often
 // the Debug Center itself). The popup, by contrast, only ever opens on top
 // of the tab you're currently looking at, so this button always scans the
@@ -81,7 +93,7 @@ m5Btn?.addEventListener('click', async () => {
       statusEl.textContent = `M5 Error: ${res?.error || 'Face/PII scan failed'}`;
     } else {
       const d = res.data;
-      statusEl.textContent = `M5 Privacy: ${d?.facesDetected || 0} face(s) blurred across ${d?.regionsScanned || 0} region(s) — ${d?.latencyMs}ms`;
+      statusEl.textContent = `M5 Privacy: ${d?.facesDetected || 0} face(s) blurred across ${d?.regionsScanned || 0} region(s) â€” ${d?.latencyMs}ms`;
     }
   });
 });
@@ -112,14 +124,14 @@ function render(state) {
     logEl.innerHTML = '';
     return;
   }
-  statusEl.textContent = `${state.status} — step ${state.iteration}${state.error ? ' — ' + state.error : ''}`;
+  statusEl.textContent = `${state.status} â€” step ${state.iteration}${state.error ? ' â€” ' + state.error : ''}`;
   startBtn.disabled = state.status === 'running';
   stopBtn.disabled = state.status !== 'running';
 
   logEl.innerHTML = '';
   (state.history || []).forEach((a, i) => {
     const li = document.createElement('li');
-    li.textContent = `${a.action}${a.target_id ? ' → ' + a.target_id : ''}${a.value ? ' = "' + a.value + '"' : ''}`;
+    li.textContent = `${a.action}${a.target_id ? ' â†’ ' + a.target_id : ''}${a.value ? ' = "' + a.value + '"' : ''}`;
     logEl.appendChild(li);
   });
 }
@@ -153,3 +165,4 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 refreshStatus();
+

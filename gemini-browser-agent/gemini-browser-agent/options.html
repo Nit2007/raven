@@ -1,25 +1,41 @@
-<!DOCTYPE html>
-<html>
+﻿<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Gemini Browser Agent — Options</title>
+  <title>RAVEN — Options & API Keys</title>
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
-  <h1>Gemini API keys</h1>
-  <p>
-    Paste one or more keys, one per line. The extension rotates across them automatically
-    when a call fails or hits a rate limit, and remembers which one last worked so
-    usage rolls forward across runs. Keys are stored only in this browser's local
-    extension storage — never bundled into the code, never sent anywhere but
-    Google's API.
-  </p>
-  <textarea id="keys" rows="8" placeholder="AIzaSy...&#10;AIzaSy..."></textarea>
-  <div class="row">
-    <button id="saveBtn">Save</button>
-    <span id="savedMsg"></span>
+  <div class="options-container">
+    <div class="header">
+      <div class="brand-logo-frame">
+        <img src="raven-logo.jpeg" alt="RAVEN" class="brand-logo-img" id="brandLogo" />
+        <span class="brand-logo-fallback" style="display:none;">🦅</span>
+      </div>
+      <div>
+        <h1>RAVEN Options</h1>
+        <p class="subtitle">API Key Rotation & Engine Configuration</p>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Gemini API Keys</h2>
+      <p class="description">
+        Paste one or more keys, one per line. RAVEN rotates across them automatically
+        when a call fails or hits a rate limit, and remembers which one last worked so
+        usage rolls forward across runs. Keys are stored strictly in this browser's local
+        extension secure storage — never bundled into the code, never sent anywhere but
+        Google's API.
+      </p>
+      <textarea id="keys" rows="6" placeholder="AIzaSy...&#10;AIzaSy..."></textarea>
+      <div class="row">
+        <button id="saveBtn">Save Keys</button>
+        <span id="savedMsg"></span>
+      </div>
+      <p class="hint">Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.</p>
+    </div>
   </div>
-  <p class="hint">Get a key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.</p>
   <script src="options.js"></script>
 </body>
 </html>
+

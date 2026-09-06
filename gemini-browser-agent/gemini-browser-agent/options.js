@@ -1,3 +1,9 @@
+﻿const brandLogo = document.getElementById('brandLogo');
+brandLogo?.addEventListener('error', () => {
+  brandLogo.style.display = 'none';
+  const fallback = document.querySelector('.brand-logo-fallback');
+  if (fallback) fallback.style.display = 'block';
+});
 const keysEl = document.getElementById('keys');
 const saveBtn = document.getElementById('saveBtn');
 const savedMsg = document.getElementById('savedMsg');
@@ -18,3 +24,4 @@ saveBtn.addEventListener('click', async () => {
 });
 
 load();
+

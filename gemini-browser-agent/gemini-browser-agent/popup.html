@@ -1,31 +1,144 @@
-<!DOCTYPE html>
-<html>
+﻿<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Gemini Browser Agent</title>
+  <title>RAVEN — Privacy-First Browser Agent</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>Gemini Browser Agent</h1>
-  <textarea id="task" rows="3" placeholder="e.g. Search this page for &quot;contact&quot; and click the first match"></textarea>
-  <div class="row">
-    <button id="startBtn">Start</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <button id="m1Btn" style="background: #0891b2;" title="Trigger M1 Viewport Capture">Capture M1</button>
-    <button id="m2Btn" style="background: #2563eb;" title="Trigger M2 DOM Analysis">Analyze M2</button>
-    <button id="m3Btn" style="background: #9333ea;" title="Trigger M3 Vision Perception">Analyze M3</button>
-    <button id="m5Btn" style="background: #e11d48;" title="Trigger M5 Face/PII Scan on THIS tab">Scan M5</button>
-  </div>
-  <div id="confirmBox" class="confirm-box" hidden>
-    <p id="confirmText"></p>
-    <div class="row">
-      <button id="confirmBtn">Confirm</button>
-      <button id="cancelBtn">Cancel</button>
+  <div class="raven-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand-wrapper">
+        <div class="brand-logo-frame">
+          <img src="raven-logo.jpeg" alt="RAVEN" class="brand-logo-img" id="brandLogo" />
+          <span class="brand-logo-fallback" style="display:none;">🦅</span>
+        </div>
+        <div class="brand-info">
+          <div class="brand-name">RAVEN</div>
+          <div class="brand-sub">Privacy-First. Always.</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="online-badge">
+          <span class="pulse-dot"></span>
+          <span>Online</span>
+        </div>
+        <button id="gearBtn" class="gear-btn" title="API Keys & Settings" >⚙</button>
+      </div>
+    </header>
+
+    <!-- Tagline Card -->
+    <div class="quote-card">
+      <div class="quote-content">
+        <div class="quote-icon">“</div>
+        <div class="quote-text">Just tell me what to do, I'll handle the rest - Securely</div>
+      </div>
+      <div class="shield-badge-decor" title="Zero Leak Guarantee">
+        🛡️
+      </div>
     </div>
+
+    <!-- Task Input Section -->
+    <section class="task-section">
+      <div class="section-label">
+        <span class="sparkle-icon">✦</span> WHAT SHOULD I DO?
+      </div>
+      <div class="task-input-box">
+        <textarea id="task" rows="3" placeholder="Tell RAVEN what you want to do..."></textarea>
+      </div>
+    </section>
+
+    <!-- Controls 3x2 Grid (Exact visual match to reference) -->
+    <div class="controls-grid-3x2">
+      <!-- Row 1 -->
+      <button id="startBtn" class="btn-card" title="Start Autonomous Task">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">▶</span>
+          <span class="btn-label">Start</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+
+      <button id="stopBtn" class="btn-card" disabled title="Stop Active Execution">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">■</span>
+          <span class="btn-label">Stop</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+
+      <button id="m1Btn" class="btn-card" title="Trigger M1 Viewport Capture">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">📷</span>
+          <span class="btn-label">Capture M1</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+
+      <!-- Row 2 -->
+      <button id="m2Btn" class="btn-card" title="Trigger M2 DOM Analysis">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">📊</span>
+          <span class="btn-label">Analyze M2</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+
+      <button id="m3Btn" class="btn-card" title="Trigger M3 Vision Perception">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">🧠</span>
+          <span class="btn-label">Analyze M3</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+
+      <button id="m5Btn" class="btn-card" title="Trigger M5 Face/PII Scan on THIS tab">
+        <div class="btn-left">
+          <span class="btn-icon-wrap">🔍</span>
+          <span class="btn-label">Scan M5</span>
+        </div>
+        <span class="btn-arrow">→</span>
+      </button>
+    </div>
+
+    <!-- Confirmation Box -->
+    <div id="confirmBox" class="confirm-box" hidden>
+      <p id="confirmText"></p>
+      <div class="row">
+        <button id="confirmBtn">Confirm</button>
+        <button id="cancelBtn">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Action & Step History Log -->
+    <ol id="log"></ol>
+
+    <!-- Zero Leak Guarantee Banner -->
+    <div class="privacy-banner">
+      <div class="privacy-banner-left">
+        <div class="privacy-shield-icon">🛡️</div>
+        <div class="privacy-text">
+          <span class="privacy-title">Zero Leak Guarantee</span>
+          <span class="privacy-sub">Sensitive data never leaves your device in raw form.</span>
+        </div>
+      </div>
+      <span class="sparkle-decor">✦</span>
+    </div>
+
+    <!-- Bottom Status Bar -->
+    <footer class="bottom-bar">
+      <div class="status-pill-wrap">
+        <span class="status-led"></span>
+        <span id="status" class="status-text">Idle</span>
+      </div>
+      <a id="optionsLink" href="#" title="Configure API Keys & Models">
+        <span class="code-bracket">&lt;/&gt;</span> API keys / options <span class="btn-arrow">→</span>
+      </a>
+    </footer>
   </div>
-  <div id="status" class="status">Idle</div>
-  <ol id="log"></ol>
-  <a id="optionsLink" href="#">API keys / options</a>
+
   <script src="popup.js"></script>
 </body>
 </html>
+
