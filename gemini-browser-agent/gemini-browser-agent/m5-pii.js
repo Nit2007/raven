@@ -26,53 +26,63 @@ export function getLastM5Result() {
 }
 
 // ---------- Config ----------
+// SENSITIVITY MODE: tuned for maximum recall per explicit request — "if it
+// looks like face/skin, blur it." This trades away precision (more
+// non-faces will get blurred) in exchange for far fewer missed real faces.
 const CFG = {
-  MAX_REGIONS: 12,
-  DOWNSCALE_WIDTH: 96,          // per-region mask resolution (raised from 64 for better recall)
-  MIN_BLOB_AREA_RATIO: 0.012,   // lowered so smaller/partial faces still register
-  MAX_BLOB_AREA_RATIO: 0.95,
-  MIN_ASPECT: 0.4,
-  MAX_ASPECT: 2.2,
-  MIN_FILL_RATIO: 0.28,         // how "solid" a blob must be to count as a face candidate
-  FALLBACK_SKIN_RATIO: 0.22,    // whole-region skin coverage that counts as "probably a face" even if no blob passes the strict filter
-  MERGE_DISTANCE_PX: 4,
-  PADDING_RATIO: 0.28,
-  BLUR_PASSES: 4,
-  BLUR_RADIUS_RATIO: 0.32,      // higher ratio since we now blur the whole avatar region, not a tight face crop
-  MIN_BLUR_RADIUS: 8,
-  MAX_BLUR_RADIUS: 48,
+  MAX_REGIONS: 20,
+  DOWNSCALE_WIDTH: 112,          // raised again for finer-grained blob edges at low cost
+  MIN_BLOB_AREA_RATIO: 0.005,    // was 0.012 — catches small/partial/distant faces
+  MAX_BLOB_AREA_RATIO: 0.97,
+  MIN_ASPECT: 0.30,              // was 0.4 — tolerate tilted/cropped/side-profile boxes
+  MAX_ASPECT: 2.8,               // was 2.2
+  MIN_FILL_RATIO: 0.20,          // was 0.28 — accept looser/less solid blobs
+  FALLBACK_SKIN_RATIO: 0.16,     // was 0.22 — lower bar for "probably skin"
+  MERGE_DISTANCE_PX: 7,          // was 4 — merges nearby fragments (e.g. face split by glare/hair) into one box
+  PADDING_RATIO: 0.38,           // was 0.28 — bigger safety margin blurred around every detected region
+  BLUR_PASSES: 5,
+  BLUR_RADIUS_RATIO: 0.42,       // was 0.32 — stronger blur so partial/uncertain hits are still well obscured
+  MIN_BLUR_RADIUS: 10,
+  MAX_BLUR_RADIUS: 60,
   THUMB_SIZE: 120,
-  M1_REUSE_WINDOW_MS: 4000       // reuse M1's screenshot if captured this recently
+  M1_REUSE_WINDOW_MS: 4000,      // reuse M1's screenshot if captured this recently
+  MIN_ACCEPT_CONFIDENCE: 0.35    // floor for the last-resort "just skin" acceptance path below
 };
 
 // FIX: matches background.js's DEBUG_CENTER_URL_RE — defensively refuse to
 // run face detection against the Debug Center's own tab (it has nothing to
 // blur, and shows up as "0 faces" mysteriously if a caller ever slips past
 // background.js's target-tab resolution without going through it).
-const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
+// FIX: widened from :5173-only to the 5170-5179 auto-increment range Vite
+// uses (strictPort:false) so this still refuses to run face detection
+// against the Debug Center's own tab when it lands on 5176 (or any other
+// nearby port) instead of the default 5173.
+const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):517\d\//;
 
 // ---------- Skin-tone classifier ----------
 // Two independent tests combined with OR: the original RGB heuristic
 // (Kovac et al.) PLUS a YCbCr chrominance-range test (Chai & Ngan / widely
 // used in OpenCV-style skin detectors). YCbCr separates luma (lighting)
 // from chroma (color), so it holds up much better across different skin
-// tones and lighting conditions than RGB rules alone — this is the main
-// accuracy fix, since the old single-heuristic version both missed a lot
-// of real faces (false negatives on darker/warmer lighting) and lit up on
-// non-face skin-colored backgrounds (false positives).
+// tones and lighting conditions than RGB rules alone.
+// WIDENED per explicit request to prioritize recall: every numeric gate
+// below is deliberately looser than a "precision-first" skin detector would
+// use, so borderline pixels (dim lighting, warm/cool white balance, slight
+// JPEG compression drift) are more likely to be classified as skin.
 function isSkinPixel(r, g, b) {
   const maxC = Math.max(r, g, b);
   const minC = Math.min(r, g, b);
   const spread = maxC - minC;
-  const uniformLight = r > 95 && g > 40 && b > 20 && spread > 15 && Math.abs(r - g) > 15 && r > g && r > b;
-  const lateralLight = r > 220 && g > 210 && b > 170 && Math.abs(r - g) <= 15 && r > b && g > b;
+  const uniformLight = r > 80 && g > 30 && b > 10 && spread > 10 && Math.abs(r - g) > 10 && r > g && r > b;
+  const lateralLight = r > 200 && g > 190 && b > 145 && Math.abs(r - g) <= 20 && r > b && g > b;
   if (uniformLight || lateralLight) return true;
 
   // YCbCr chrominance test — catches tones the RGB rule above misses.
+  // Ranges widened from the standard Cb[77,135]/Cr[133,180] textbook window.
   const y = 0.299 * r + 0.587 * g + 0.114 * b;
   const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
   const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-  return y > 40 && cb >= 77 && cb <= 135 && cr >= 133 && cr <= 180;
+  return y > 25 && cb >= 70 && cb <= 145 && cr >= 125 && cr <= 188;
 }
 
 function buildSkinMask(ctx, x, y, w, h) {
@@ -150,13 +160,17 @@ function mergeBlobs(blobs, dist) {
 
 // Anthropomorphic Facial Structure & Biometric Geometry Verification
 // Distinguishes genuine human faces from non-face skin patches (hands, arms, neck, furniture, cardboard)
+// WIDENED per explicit request: every gate here is now a soft signal that
+// feeds a tiered acceptance ladder (strict -> fallback -> "just skin, blur
+// it") rather than a hard reject, so far fewer real faces slip through.
 function verifyFacialStructure(pixelData, imgW, imgH, box) {
   const { x, y, width: bw, height: bh } = box;
-  if (bw < 14 || bh < 14) return { isFace: false, reason: 'too_small' };
+  if (bw < 10 || bh < 10) return { isFace: false, reason: 'too_small' };
 
   const aspect = bw / bh;
-  // Human face aspect ratio is strictly near 0.60 - 1.45 (chin to forehead, ear to ear)
-  if (aspect < 0.60 || aspect > 1.45) {
+  // Widened from the strict 0.60-1.45 face-only window so tilted heads,
+  // partial crops, and side profiles aren't thrown out before skin is even checked.
+  if (aspect < 0.30 || aspect > 3.2) {
     return { isFace: false, reason: 'aspect_ratio_out_of_range', aspect };
   }
 
@@ -180,14 +194,17 @@ function verifyFacialStructure(pixelData, imgW, imgH, box) {
 
   const numPixels = bw * bh;
   const skinRatio = skinCount / numPixels;
-  if (skinRatio < 0.28) return { isFace: false, reason: 'insufficient_skin', skinRatio };
+  // Was 0.28 — lowered so partially-occluded or side-lit skin regions aren't dropped this early.
+  if (skinRatio < 0.16) return { isFace: false, reason: 'insufficient_skin', skinRatio };
 
   const meanL = lumSum / numPixels;
   const varL = Math.max(0, (lumSqSum / numPixels) - (meanL * meanL));
   const stdL = Math.sqrt(varL);
 
-  // Flat inanimate surfaces (cardboard, painted walls, uniform UI elements) have virtually 0 luminance variance
-  if (stdL < 7.0 && skinRatio > 0.85) {
+  // Flat inanimate surfaces (cardboard, painted walls, uniform UI elements) have virtually 0 luminance variance.
+  // Tightened the reject condition itself (lower stdL floor, higher skinRatio floor) so it only
+  // fires on truly flat swatches, not on real but evenly-lit skin.
+  if (stdL < 4.0 && skinRatio > 0.93) {
     return { isFace: false, reason: 'flat_inanimate_surface', stdL };
   }
 
@@ -227,7 +244,9 @@ function verifyFacialStructure(pixelData, imgW, imgH, box) {
   const leftEyeDrop = avgForeheadLum - leftEyeMin;
   const rightEyeDrop = avgForeheadLum - rightEyeMin;
   const bridgeProminence = Math.min(noseBridgeMax - leftEyeMin, noseBridgeMax - rightEyeMin);
-  const eyeCavityPresent = (leftEyeDrop >= 7 && rightEyeDrop >= 7 && bridgeProminence >= 4);
+  // Was >=7/>=7/>=4 — lowered so subtler eye-shadow contrast (e.g. glasses glare,
+  // warm indoor lighting washing out shadow depth) still registers as "present".
+  const eyeCavityPresent = (leftEyeDrop >= 4 && rightEyeDrop >= 4 && bridgeProminence >= 2);
 
   // Bilateral Horizontal Symmetry Across Vertical Midline
   let symDiff = 0, symTotal = 0;
@@ -242,26 +261,57 @@ function verifyFacialStructure(pixelData, imgW, imgH, box) {
   }
   const symmetry = symTotal > 0 ? 1 - (symDiff / symTotal) : 0;
 
-  // STRICT NON-FACE REJECTION:
-  // Must possess bilateral eye cavity dips separated by a nose bridge and sufficient horizontal symmetry
+  // TIER 1 — STRICT BIOMETRIC (highest confidence):
+  // Bilateral eye cavity dips separated by a nose bridge, with good horizontal symmetry.
+  // Symmetry bar lowered from 0.65 -> 0.50 to admit off-angle/tilted faces.
+  if (eyeCavityPresent && symmetry >= 0.50) {
+    const eyeConfidence = Math.min(0.35, ((leftEyeDrop + rightEyeDrop) / 40) * 0.35);
+    const symConfidence = Math.min(0.30, symmetry * 0.30);
+    const skinConfidence = Math.min(0.25, skinRatio * 0.25);
+    const confidence = Number(Math.max(0.55, Math.min(0.97, 0.15 + eyeConfidence + symConfidence + skinConfidence)).toFixed(2));
+
+    return {
+      isFace: true,
+      confidence,
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'strict_biometric' }
+    };
+  }
+
+  // TIER 2 — SKIN + TEXTURE FALLBACK (medium confidence):
+  // Real photographic skin (not a flat swatch) with at least a faint eye-region
+  // luminance dip on ONE side. Bars lowered substantially vs. the original
+  // fallback so partial, blurry, or off-angle faces still land here.
+  const partialEyeSignal = Math.max(leftEyeDrop, rightEyeDrop) >= 2;
+  if (skinRatio >= CFG.FALLBACK_SKIN_RATIO + 0.10 && stdL >= 5 && partialEyeSignal) {
+    const skinConfidence = Math.min(0.30, skinRatio * 0.30);
+    const textureConfidence = Math.min(0.20, (stdL / 60) * 0.20);
+    const confidence = Number(Math.max(0.45, Math.min(0.85, 0.20 + skinConfidence + textureConfidence)).toFixed(2));
+    return {
+      isFace: true,
+      confidence,
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'fallback_skin_texture' }
+    };
+  }
+
+  // TIER 3 — "JUST SKIN, BLUR IT" (lowest confidence, last resort):
+  // Per explicit instruction to keep the bar low: any region that is mostly
+  // skin-toned pixels with SOME non-flat texture (i.e. not a plain wall/UI
+  // swatch) gets blurred even with no facial-geometry evidence at all. This
+  // deliberately accepts more false positives (hands, necks, arms, tanned
+  // furniture) in exchange for essentially never missing a real face.
+  if (skinRatio >= CFG.FALLBACK_SKIN_RATIO && stdL >= 3) {
+    const confidence = Number(Math.max(CFG.MIN_ACCEPT_CONFIDENCE, Math.min(0.55, 0.20 + skinRatio * 0.25)).toFixed(2));
+    return {
+      isFace: true,
+      confidence,
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'skin_only_low_bar' }
+    };
+  }
+
   if (!eyeCavityPresent) {
     return { isFace: false, reason: 'missing_bilateral_eye_cavities', leftEyeDrop, rightEyeDrop, bridgeProminence };
   }
-  if (symmetry < 0.65) {
-    return { isFace: false, reason: 'insufficient_bilateral_symmetry', symmetry };
-  }
-
-  // Evidence-based confidence calculation
-  const eyeConfidence = Math.min(0.35, ((leftEyeDrop + rightEyeDrop) / 40) * 0.35);
-  const symConfidence = Math.min(0.30, symmetry * 0.30);
-  const skinConfidence = Math.min(0.25, skinRatio * 0.25);
-  const confidence = Number(Math.max(0.48, Math.min(0.96, 0.10 + eyeConfidence + symConfidence + skinConfidence)).toFixed(2));
-
-  return {
-    isFace: true,
-    confidence,
-    metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)) }
-  };
+  return { isFace: false, reason: 'insufficient_bilateral_symmetry', symmetry };
 }
 
 function computeIoU(b1, b2) {
@@ -340,7 +390,7 @@ async function broadcastTelemetry(payload) {
   }
   if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
     try {
-      const debugTabs = await chrome.tabs.query({ url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*'] });
+      const debugTabs = await chrome.tabs.query({ url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*', '*://localhost:5174/*', '*://127.0.0.1:5174/*', '*://localhost:5175/*', '*://127.0.0.1:5175/*', '*://localhost:5176/*', '*://127.0.0.1:5176/*', '*://localhost:5177/*', '*://127.0.0.1:5177/*', '*://localhost:5178/*', '*://127.0.0.1:5178/*', '*://localhost:5179/*', '*://127.0.0.1:5179/*'] });
       for (const tab of debugTabs) {
         chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }, async () => {
           if (chrome.runtime.lastError) {
@@ -462,8 +512,15 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
       }
     }
 
-    // Direct visual candidate discovery if DOM regions are empty or sparse
-    if (candidateBoxes.length === 0) {
+    // FIX: this used to only run when candidateBoxes.length === 0, meaning a
+    // single (possibly wrong) DOM avatar match — e.g. a logo image whose
+    // class name happened to contain "avatar" — would suppress whole-page
+    // scanning entirely, so real faces elsewhere on the page (e.g. a webcam
+    // <video> tile, a photo not tagged with an avatar/profile class) never
+    // got evaluated at all. Now it always runs; step 5's NMS/IoU pass below
+    // already de-duplicates any boxes that overlap with DOM-found regions,
+    // so this only adds coverage, never double-blurs the same face.
+    {
       const maskInfo = buildSkinMask(ctx, 0, 0, canvas.width, canvas.height);
       const rawBlobs = findBlobs(maskInfo.mask, maskInfo.mw, maskInfo.mh);
       const merged = mergeBlobs(rawBlobs, CFG.MERGE_DISTANCE_PX);
@@ -502,7 +559,10 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     verifiedCandidates.sort((a, b) => b.confidence - a.confidence);
     const finalFaces = [];
     for (const cand of verifiedCandidates) {
-      const overlaps = finalFaces.some(f => computeIoU(f.box, cand.box) > 0.35);
+      // Raised NMS overlap bar from 0.35 -> 0.55 so only near-duplicate boxes
+      // get suppressed — adjacent-but-distinct skin regions (e.g. two people
+      // close together) are both kept instead of one swallowing the other.
+      const overlaps = finalFaces.some(f => computeIoU(f.box, cand.box) > 0.55);
       if (!overlaps) {
         finalFaces.push(cand);
       }
@@ -627,4 +687,4 @@ export async function runM5PiiScan(input = {}) {
       sensitiveRegions: 0
     }
   };
-}
+}

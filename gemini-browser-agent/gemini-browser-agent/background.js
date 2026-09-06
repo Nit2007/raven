@@ -3,7 +3,7 @@ async function broadcastAgentTelemetry(payload) {
   try {
     chrome.runtime.sendMessage(payload).catch(() => {});
     const debugTabs = await chrome.tabs.query({
-      url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*']
+      url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*', '*://localhost:5174/*', '*://127.0.0.1:5174/*', '*://localhost:5175/*', '*://127.0.0.1:5175/*', '*://localhost:5176/*', '*://127.0.0.1:5176/*', '*://localhost:5177/*', '*://127.0.0.1:5177/*', '*://localhost:5178/*', '*://127.0.0.1:5178/*', '*://localhost:5179/*', '*://127.0.0.1:5179/*']
     });
     for (const tab of debugTabs) {
       chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }).catch(() => {});
@@ -61,7 +61,17 @@ async function setTaskState(tabId, state) {
 //      that IS the page being monitored).
 //   2. Otherwise, the most recently active tab that ISN'T the Debug Center.
 //   3. Last resort: old behavior (active tab in the focused window).
-const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
+// FIX: was hardcoded to :5173 only. Vite's dev server auto-increments the
+// port (strictPort:false) whenever 5173 is already taken, so the Debug
+// Center commonly ends up on 5174/5175/5176/etc. With the old regex,
+// a Debug Center running on any port other than 5173 was NOT recognized
+// as the Debug Center — resolveTargetTabId() would then treat the Debug
+// Center tab as a normal page to scan, and M5 would run face detection
+// against the Debug Center's own UI (which has no faces) instead of the
+// real target site. This is the most likely reason "face blurring isn't
+// applied" when the Debug Center is open on a non-5173 port. Widened to
+// match the whole 5170-5179 auto-increment range.
+const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):517\d\//;
 
 async function resolveTargetTabId(explicitTabId) {
   if (explicitTabId) return explicitTabId;

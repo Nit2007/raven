@@ -45,7 +45,7 @@ async function broadcastTelemetry(payload) {
   if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
     try {
       const debugTabs = await chrome.tabs.query({
-        url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*']
+        url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*', '*://localhost:5174/*', '*://127.0.0.1:5174/*', '*://localhost:5175/*', '*://127.0.0.1:5175/*', '*://localhost:5176/*', '*://127.0.0.1:5176/*', '*://localhost:5177/*', '*://127.0.0.1:5177/*', '*://localhost:5178/*', '*://127.0.0.1:5178/*', '*://localhost:5179/*', '*://127.0.0.1:5179/*']
       });
       for (const tab of debugTabs) {
         chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }).catch(() => {});
@@ -877,4 +877,3 @@ export async function runM6PerceptionFusion(inputs = {}) {
     return errorResult;
   }
 }
-

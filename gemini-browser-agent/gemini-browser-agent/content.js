@@ -575,10 +575,12 @@
     function pushCandidate(img, matchType) {
       if (seen.has(img)) return;
       const rect = img.getBoundingClientRect();
-      if (rect.width < 16 || rect.height < 16) return;
+      if (rect.width < 12 || rect.height < 12) return;
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= vpWidth || rect.top >= vpHeight) return;
       const aspect = rect.width / rect.height;
-      if (aspect < 0.4 || aspect > 2.5) return;
+      // Widened from 0.4-2.5 to 0.3-3.2 to keep sensitivity high per request —
+      // catch cropped/tilted/side-profile images instead of discarding them early.
+      if (aspect < 0.3 || aspect > 3.2) return;
       seen.add(img);
       regions.push({
         id: assignId(img),
@@ -595,16 +597,18 @@
 
     const allImgs = Array.from(document.querySelectorAll('img'));
     for (const img of allImgs) {
-      if (regions.length >= 12) break;
+      if (regions.length >= 20) break;
       if (seen.has(img)) continue;
       const rect = img.getBoundingClientRect();
-      if (rect.width < 24 || rect.width > 400 || rect.height < 24 || rect.height > 400) continue;
+      // Widened size window (was 24-400) so smaller thumbnails and larger
+      // hero/profile photos both get evaluated instead of skipped.
+      if (rect.width < 16 || rect.width > 700 || rect.height < 16 || rect.height > 700) continue;
       pushCandidate(img, 'heuristic');
     }
 
     return {
       viewport: { width: vpWidth, height: vpHeight, devicePixelRatio: window.devicePixelRatio || 1 },
-      regions: regions.slice(0, 12)
+      regions: regions.slice(0, 20)
     };
   }
 
