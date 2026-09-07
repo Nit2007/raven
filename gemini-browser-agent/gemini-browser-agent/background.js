@@ -1,7 +1,35 @@
+// --- Minimal Presentation-Layer Telemetry Forwarder ---
+async function broadcastAgentTelemetry(payload) {
+  try {
+    chrome.runtime.sendMessage(payload).catch(() => {});
+    const debugTabs = await chrome.tabs.query({
+      url: ['*://localhost:5173/*', '*://127.0.0.1:5173/*', '*://localhost:5174/*', '*://127.0.0.1:5174/*', '*://localhost:5175/*', '*://127.0.0.1:5175/*', '*://localhost:5176/*', '*://127.0.0.1:5176/*', '*://localhost:5177/*', '*://127.0.0.1:5177/*', '*://localhost:5178/*', '*://127.0.0.1:5178/*', '*://localhost:5179/*', '*://127.0.0.1:5179/*']
+    });
+    for (const tab of debugTabs) {
+      chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload }).catch(() => {});
+    }
+  } catch (_) {}
+  try {
+    fetch('http://localhost:8765/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {});
+  } catch (_) {}
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      new BroadcastChannel('raven-telemetry').postMessage(payload);
+    }
+  } catch (_) {}
+}
+
 import { GeminiClient } from './gemini-client.js';
 import { captureViewportM1 } from './m1-capture.js';
 import { runM2DomAnalysis } from './m2-dom.js';
-import { runM5PiiAnalysis } from './m5-pii.js';
+import { runM3VisualAnalysis, getLastM3Result } from './m3-vision.js';
+import { runM4Ocr, getLastM4Result } from './m4-ocr.js';
+import { runM5PiiAnalysis, getLastM5Result } from './m5-pii.js';
+import { runM6PerceptionFusion, getLastM6Result } from './m6-fusion.js';
 import { StateTreeMemory } from './state-tree-memory.js';
 
 const client = new GeminiClient();
@@ -33,7 +61,17 @@ async function setTaskState(tabId, state) {
 //      that IS the page being monitored).
 //   2. Otherwise, the most recently active tab that ISN'T the Debug Center.
 //   3. Last resort: old behavior (active tab in the focused window).
-const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):5173\//;
+// FIX: was hardcoded to :5173 only. Vite's dev server auto-increments the
+// port (strictPort:false) whenever 5173 is already taken, so the Debug
+// Center commonly ends up on 5174/5175/5176/etc. With the old regex,
+// a Debug Center running on any port other than 5173 was NOT recognized
+// as the Debug Center — resolveTargetTabId() would then treat the Debug
+// Center tab as a normal page to scan, and M5 would run face detection
+// against the Debug Center's own UI (which has no faces) instead of the
+// real target site. This is the most likely reason "face blurring isn't
+// applied" when the Debug Center is open on a non-5173 port. Widened to
+// match the whole 5170-5179 auto-increment range.
+const DEBUG_CENTER_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1):517\d\//;
 
 async function resolveTargetTabId(explicitTabId) {
   if (explicitTabId) return explicitTabId;
@@ -81,7 +119,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; 
 });
 
-async function handleMessage(msg) {
+async function handleMessage(msg, sender) {
   switch (msg.type) {
     case 'START_TASK':
       return startTask(msg.tabId, msg.task);
@@ -95,9 +133,107 @@ async function handleMessage(msg) {
       const tabId = await resolveTargetTabId(msg.tabId);
       return runM2DomAnalysis(tabId);
     }
+    case 'TRIGGER_M3': {
+      const tabId = await resolveTargetTabId(msg.tabId);
+      const m1Res = await captureViewportM1(tabId);
+      if (m1Res?.ok && (m1Res.data?.screenshot || m1Res.data?.dataUrl)) {
+        return runM3VisualAnalysis(m1Res.data.screenshot || m1Res.data.dataUrl, { tabId });
+      }
+      return { ok: false, error: 'Failed to obtain viewport screenshot for M3' };
+    }
     case 'TRIGGER_M5': {
       const tabId = await resolveTargetTabId(msg.tabId);
       return runM5PiiAnalysis(tabId);
+    }
+    case 'TRIGGER_M4': {
+      const tabId = await resolveTargetTabId(msg.tabId);
+      const obs = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+      return runM4Ocr({ elements: obs?.elements, tabId });
+    }
+    case 'TRIGGER_M6': {
+      const tabId = await resolveTargetTabId(msg.tabId);
+      const obs = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
+      return runM6PerceptionFusion({
+        observation: obs,
+        m3Result: getLastM3Result(),
+        m4Result: getLastM4Result(),
+        m5Result: getLastM5Result(),
+        perceptionCycleId: `manual-${Date.now()}`
+      });
+    }
+    case 'SET_EDITOR_VALUE_MAIN_WORLD': {
+      const tabId = sender?.tab?.id || (await resolveTargetTabId(msg.tabId));
+      if (!tabId) return { ok: false, error: 'No active tab for editor injection' };
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (code) => {
+            try {
+              // 1. Monaco Editor (LeetCode, VS Code Web, StackBlitz, Codespaces)
+              if (window.monaco && window.monaco.editor) {
+                const models = window.monaco.editor.getModels ? window.monaco.editor.getModels() : [];
+                if (models && models.length > 0) {
+                  models[0].setValue(code);
+                  return { ok: true, engine: 'monaco-models' };
+                }
+                const editors = window.monaco.editor.getEditors ? window.monaco.editor.getEditors() : [];
+                for (const ed of editors) {
+                  if (typeof ed.setValue === 'function') {
+                    ed.setValue(code);
+                    if (typeof ed.focus === 'function') ed.focus();
+                    return { ok: true, engine: 'monaco-editors' };
+                  }
+                }
+              }
+
+              // Monaco fallback via require if present
+              if (!window.monaco && typeof window.require === 'function') {
+                try {
+                  const m = window.require('vs/editor/editor.main');
+                  const models = m?.editor?.getModels ? m.editor.getModels() : [];
+                  if (models && models.length > 0) {
+                    models[0].setValue(code);
+                    return { ok: true, engine: 'monaco-require-models' };
+                  }
+                } catch (_) {}
+              }
+
+              // 2. CodeMirror 5
+              const cm5 = document.querySelector('.CodeMirror')?.CodeMirror;
+              if (cm5 && typeof cm5.setValue === 'function') {
+                cm5.setValue(code);
+                return { ok: true, engine: 'codemirror5' };
+              }
+
+              // 3. CodeMirror 6
+              const cm6 = document.querySelector('.cm-editor');
+              if (cm6 && cm6.cmView && cm6.cmView.view) {
+                const view = cm6.cmView.view;
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
+                return { ok: true, engine: 'codemirror6' };
+              }
+
+              // 4. Ace Editor
+              if (window.ace) {
+                const aceEl = document.querySelector('.ace_editor');
+                if (aceEl && window.ace.edit) {
+                  window.ace.edit(aceEl).setValue(code);
+                  return { ok: true, engine: 'ace' };
+                }
+              }
+
+              return { ok: false, error: 'No recognized code editor found in page context' };
+            } catch (err) {
+              return { ok: false, error: String(err) };
+            }
+          },
+          args: [msg.code]
+        });
+        return { ok: true, result: results?.[0]?.result };
+      } catch (err) {
+        return { ok: false, error: String(err) };
+      }
     }
     case 'GET_STATUS':
       return { ok: true, status: await getTaskState(msg.tabId) };
@@ -125,6 +261,12 @@ async function startTask(tabId, task) {
     lastElement: null
   };
   await setTaskState(tabId, initialState);
+  broadcastAgentTelemetry({
+    type: 'TASK_START',
+    task: task.trim(),
+    iteration: 0,
+    status: 'running'
+  });
   
   runLoop(tabId); 
   return { ok: true };
@@ -155,8 +297,9 @@ async function runLoop(tabId) {
       await setTaskState(tabId, state);
 
       // Milestone M1: Real Viewport / Screenshot Capture (local only, never sent to Gemini)
+      let m1Result = null;
       try {
-        await captureViewportM1(tabId, { iteration: state.iteration });
+        m1Result = await captureViewportM1(tabId, { iteration: state.iteration });
       } catch (m1Err) {
         console.warn('[M1 Capture] Non-fatal capture failure during loop:', m1Err);
       }
@@ -166,6 +309,15 @@ async function runLoop(tabId) {
         await runM2DomAnalysis(tabId, { iteration: state.iteration });
       } catch (m2Err) {
         console.warn('[M2 DOM] Non-fatal DOM analysis error during loop:', m2Err);
+      }
+
+      // Milestone M3: Local Visual Perception
+      try {
+        if (m1Result?.data?.screenshot) {
+          await runM3VisualAnalysis(m1Result.data.screenshot, { iteration: state.iteration, tabId });
+        }
+      } catch (m3Err) {
+        console.warn('[M3 Vision] Non-fatal visual analysis error during loop:', m3Err);
       }
 
       // Milestone M5: Face & PII / Sensitive Content Detection (local only, blurs
@@ -191,11 +343,40 @@ async function runLoop(tabId) {
             observation = await sendToContent(tabId, { type: 'GET_OBSERVATION' });
           }
 
+          // Milestone M4: Local Optical Character Recognition (OCR)
+          let m4Result = null;
+          try {
+            m4Result = await runM4Ocr({ elements: observation.elements, tabId });
+          } catch (m4Err) {
+            console.warn('[M4 OCR] Non-fatal OCR error during loop:', m4Err);
+          }
+
+          // Milestone M6: Perception Fusion, PII Sanitization & Fail-Closed Gate
+          const m3Result = getLastM3Result();
+          const m5Result = getLastM5Result();
+          const m6Result = await runM6PerceptionFusion({
+            m1Result,
+            m2Result: { data: { elements: observation.elements } },
+            m3Result,
+            m4Result,
+            m5Result,
+            observation,
+            perceptionCycleId: `cycle-${state.iteration}-${Date.now()}`
+          });
+
+          if (!m6Result.ok || !m6Result.data?.privacyGatePassed) {
+            const gateErr = m6Result.error || m6Result.blockedReason || 'Privacy Gate blocked unredacted observation release';
+            throw new Error(`[M6 Privacy Gate FAIL-CLOSED] ${gateErr}`);
+          }
+
+          // Use strictly sanitized observation for memory and Gemini LLM boundary
+          const sanitizedObservation = m6Result.data.sanitizedObservation;
+
           if (!state.visitedHashes) {
             state.visitedHashes = {};
           }
-          state.visitedHashes[observation.pageHash] = (state.visitedHashes[observation.pageHash] || 0) + 1;
-          const visitCount = state.visitedHashes[observation.pageHash];
+          state.visitedHashes[sanitizedObservation.pageHash] = (state.visitedHashes[sanitizedObservation.pageHash] || 0) + 1;
+          const visitCount = state.visitedHashes[sanitizedObservation.pageHash];
 
           // Rehydrate and advance StateTreeMemory
           const treeMemory = StateTreeMemory.fromJSON(state.treeMemory);
@@ -204,12 +385,12 @@ async function runLoop(tabId) {
           if (state.lastAction && (state.lastObservation || state.lastHash)) {
             const outcome = StateTreeMemory.classifyOutcome(
               state.lastObservation,
-              observation,
+              sanitizedObservation,
               state.lastAction
             );
             treeMemory.recordTransition(
               state.lastHash || state.lastObservation?.pageHash,
-              observation.pageHash,
+              sanitizedObservation.pageHash,
               state.lastAction,
               state.lastElement,
               outcome
@@ -217,19 +398,27 @@ async function runLoop(tabId) {
           }
 
           // Register current page state node in tree
-          treeMemory.recordState(observation);
+          treeMemory.recordState(sanitizedObservation);
 
           // Generate prompt-safe structured memory block
-          const treeMemoryContext = treeMemory.getPromptContext(observation);
+          const treeMemoryContext = treeMemory.getPromptContext(sanitizedObservation);
 
           // Update treeMemory in task state
           state.treeMemory = treeMemory.toJSON();
 
+          // CRITICAL PRIVACY GUARD: Verify that outbound visual context is strictly M6-sanitized
+          const rawM1Screenshot = m1Result?.data?.screenshot || m1Result?.screenshot;
+          const outboundScreenshot = sanitizedObservation.sanitizedScreenshot?.dataUrl || sanitizedObservation.sanitizedScreenshot?.base64;
+          if (m5Result?.facesDetected > 0 && rawM1Screenshot && outboundScreenshot && (rawM1Screenshot === outboundScreenshot)) {
+            throw new Error('[SECURITY FATAL] Outbound visual observation is unredacted raw M1 screenshot! Aborted before Gemini transmission.');
+          }
+
           const action = await client.chooseNextAction(
             state.task,
             {
-              ...observation,
-              pageHash: observation.pageHash,
+              ...sanitizedObservation,
+              sanitizedScreenshot: sanitizedObservation.sanitizedScreenshot || m6Result.data?.sanitizedScreenshot || null,
+              pageHash: sanitizedObservation.pageHash,
               visitCount,
               actionHistory: state.history,
               treeMemoryContext
@@ -237,10 +426,10 @@ async function runLoop(tabId) {
           );
 
           // Extract targeted element for semantic transition tracking on next iteration
-          const targetEl = (observation.elements || []).find((el) => el.target_id === action.target_id) || null;
+          const targetEl = (sanitizedObservation.elements || []).find((el) => el.target_id === action.target_id) || null;
           state.lastAction = action;
-          state.lastHash = observation.pageHash;
-          state.lastObservation = observation;
+          state.lastHash = sanitizedObservation.pageHash;
+          state.lastObservation = sanitizedObservation;
           state.lastElement = targetEl ? {
             tag: targetEl.tag,
             type: targetEl.type,

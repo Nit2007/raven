@@ -247,6 +247,11 @@ class TelemetryReceiver {
           piiDetected: data.piiDetected || 0,
           sensitiveRegions: data.sensitiveRegions || 0,
           gateStatus: data.gateStatus || PRIVACY_GATE_STATUS.WAITING,
+          candidatesEvaluated: data.candidatesEvaluated || (data.details?.candidatesEvaluated || 0),
+          backend: data.backend || data.detector || 'classical_biometric_cv',
+          executionTimeMs: data.executionTimeMs || 0,
+          captureId: data.captureId || null,
+          perceptionCycleId: data.perceptionCycleId || null,
           ...(redactedShot ? { screenshotUrl: redactedShot } : {})
         });
         break;
@@ -264,10 +269,28 @@ class TelemetryReceiver {
           inputsReceived: data.inputsReceived || [],
           regionsMerged: data.regionsMerged || 0,
           sensitiveRedacted: data.sensitiveRedacted || 0,
+          candidatesEvaluated: data.candidatesEvaluated || 0,
+          finalDetections: data.finalDetections || (data.redactionRegions || []).length,
+          redactionRegions: data.redactionRegions || [],
           sanitizedObservation: data.sanitizedObservation || null,
-          privacyGatePassed: data.privacyGatePassed || false,
-          leakCheckPassed: data.leakCheckPassed || true
+          privacyGatePassed: data.privacyGatePassed ?? false,
+          leakCheckPassed: data.leakCheckPassed ?? true,
+          blockedReason: data.blockedReason || (data.details?.error || null),
+          executionTimeMs: data.executionTimeMs || 0
         });
+        break;
+
+      case 'TASK_START':
+      case 'TASK_UPDATE':
+      case 'AGENT_TASK':
+        store.updateAgentTelemetry({
+          task: data.task || data.payload?.task || data.userTask,
+          iteration: data.iteration ?? 0,
+          status: data.status || 'running'
+        });
+        if (data.task || data.payload?.task) {
+          store.updateBrowserState({ userTask: data.task || data.payload?.task });
+        }
         break;
 
       case 'AGENT_TELEMETRY':

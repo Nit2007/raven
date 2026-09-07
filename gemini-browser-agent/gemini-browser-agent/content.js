@@ -32,15 +32,267 @@
     if (typeof el.nodeName === 'string') return el.nodeName.toLowerCase();
     try {
       const raw = Object.getOwnPropertyDescriptor(Element.prototype, 'tagName')?.get?.call(el) ||
-                  Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')?.get?.call(el);
+        Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')?.get?.call(el);
       if (typeof raw === 'string') return raw.toLowerCase();
-    } catch (_) {}
+    } catch (_) { }
     return '';
+  }
+
+  // --- Generic Code Editor Detection & Input Handling ---
+  const CODE_EDITOR_SELECTORS = [
+    '.monaco-editor',
+    '.cm-editor',
+    '.CodeMirror',
+    '.ace_editor',
+    '[role="code"]',
+    '[data-mode-id]',
+    '.code-editor',
+    '[class*="code-editor" i]'
+  ].join(', ');
+
+  function isCodeEditorElement(el) {
+    if (!el || typeof el.matches !== 'function') return false;
+    return el.matches(CODE_EDITOR_SELECTORS) || !!el.closest?.(CODE_EDITOR_SELECTORS);
+  }
+
+  function findCodeEditorContext(el) {
+    if (!el) return null;
+
+    // 1. Monaco Editor (VS Code / LeetCode / StackBlitz / Codespaces / etc.)
+    const monaco = el.closest?.('.monaco-editor') || (el.classList?.contains('monaco-editor') ? el : el.querySelector?.('.monaco-editor'));
+    if (monaco) {
+      const inputarea = monaco.querySelector('textarea.inputarea') || monaco.querySelector('textarea');
+      const lines = monaco.querySelector('.view-lines') || monaco;
+      return {
+        type: 'monaco',
+        container: monaco,
+        inputElement: inputarea || monaco,
+        contentElement: lines,
+        isContentEditable: false
+      };
+    }
+
+    // 2. CodeMirror 6 (modern CodeMirror with contenteditable)
+    const cm6 = el.closest?.('.cm-editor') || (el.classList?.contains('cm-editor') ? el : el.querySelector?.('.cm-editor'));
+    if (cm6) {
+      const content = cm6.querySelector('.cm-content[contenteditable="true"]') || cm6.querySelector('[contenteditable="true"]');
+      return {
+        type: 'codemirror6',
+        container: cm6,
+        inputElement: content || cm6,
+        contentElement: content || cm6,
+        isContentEditable: true
+      };
+    }
+
+    // 3. CodeMirror 5 (classic CodeMirror with hidden textarea)
+    const cm5 = el.closest?.('.CodeMirror') || (el.classList?.contains('CodeMirror') ? el : el.querySelector?.('.CodeMirror'));
+    if (cm5) {
+      const textarea = cm5.querySelector('textarea');
+      const lines = cm5.querySelector('.CodeMirror-lines') || cm5;
+      return {
+        type: 'codemirror5',
+        container: cm5,
+        inputElement: textarea || cm5,
+        contentElement: lines,
+        isContentEditable: false
+      };
+    }
+
+    // 4. Ace Editor
+    const ace = el.closest?.('.ace_editor') || (el.classList?.contains('ace_editor') ? el : el.querySelector?.('.ace_editor'));
+    if (ace) {
+      const textarea = ace.querySelector('textarea.ace_text-input') || ace.querySelector('textarea');
+      const lines = ace.querySelector('.ace_scroller') || ace;
+      return {
+        type: 'ace',
+        container: ace,
+        inputElement: textarea || ace,
+        contentElement: lines,
+        isContentEditable: false
+      };
+    }
+
+    // 5. Generic Code Editor / [role="code"] / [data-mode-id]
+    const generic = el.closest?.('[role="code"], [data-mode-id], .code-editor, [class*="code-editor" i]') ||
+      (el.getAttribute?.('role') === 'code' ? el : el.querySelector?.('[role="code"]'));
+    if (generic) {
+      const innerInput = generic.querySelector('textarea, input, [contenteditable="true"]');
+      return {
+        type: 'generic-code',
+        container: generic,
+        inputElement: innerInput || generic,
+        contentElement: generic,
+        isContentEditable: !!(innerInput?.isContentEditable || generic.isContentEditable)
+      };
+    }
+
+    return null;
+  }
+
+  function formatSolutionCode(rawText, existingText = '') {
+    if (!rawText || typeof rawText !== 'string') return rawText;
+    let code = rawText.trim();
+
+    // Strip markdown code fences if present
+    const fenced = code.match(/^```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```$/);
+    if (fenced) {
+      code = fenced[1].trim();
+    }
+
+    // If incoming code already defines a class or struct, return as is
+    if (/^\s*(class\s+Solution|class\s+\w+|struct\s+\w+)/m.test(code)) {
+      return code;
+    }
+
+    // Check if the current editor, DOM, or URL indicates a LeetCode or class Solution environment
+    const hasClassSolution = /class\s+Solution/.test(existingText) ||
+      /class\s+Solution/.test(document.body?.innerText || '') ||
+      (typeof window !== 'undefined' && window.location?.hostname?.includes('leetcode'));
+
+    if (hasClassSolution) {
+      const isPython = /def\s+\w+\s*\(/.test(code);
+      if (isPython) {
+        const lines = code.split('\n');
+        const indented = lines.map(line => line.trim().length > 0 ? '    ' + line : line).join('\n');
+        return `class Solution:\n${indented}`;
+      } else {
+        // C++ / Java / C#
+        const lines = code.split('\n');
+        const indented = lines.map(line => line.trim().length > 0 ? '    ' + line : line).join('\n');
+        return `class Solution {\npublic:\n${indented}\n};`;
+      }
+    }
+
+    return code;
+  }
+
+  async function typeIntoCodeEditor(editorCtx, text) {
+    const { container, inputElement, isContentEditable } = editorCtx;
+
+    // 1. Scroll editor into view
+    if (typeof container.scrollIntoView === 'function') {
+      container.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+
+    // 2. Dispatch pointer focus sequence to container and lines
+    try {
+      container.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      container.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      container.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    } catch (_) {}
+
+    // 3. Focus the active input element
+    const targetInput = inputElement || container;
+    if (targetInput && typeof targetInput.focus === 'function') {
+      targetInput.focus();
+    }
+
+    const existingContent = editorCtx.contentElement?.innerText || editorCtx.container?.innerText || '';
+    const formattedText = formatSolutionCode(text, existingContent);
+
+    // Micro-delay to allow browser focus and editor cursor positioning to settle
+    await new Promise((r) => setTimeout(r, 40));
+
+    let inserted = false;
+
+    // 4. Primary MV3 method: Request Background Service Worker to execute in MAIN world
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        const resp = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'SET_EDITOR_VALUE_MAIN_WORLD', code: formattedText }, (r) => {
+            if (chrome.runtime.lastError) resolve(null);
+            else resolve(r);
+          });
+        });
+        if (resp && resp.ok && resp.result && resp.result.ok) {
+          inserted = true;
+        }
+      }
+    } catch (_) {}
+
+    // 5. Try native document.execCommand (Universal across Monaco, Ace, and CodeMirror when running in same execution world)
+    if (!inserted) {
+      try {
+        if (typeof document.execCommand === 'function') {
+          try {
+            document.execCommand('selectAll', false, null);
+          } catch (_) {}
+          inserted = document.execCommand('insertText', false, formattedText);
+        }
+      } catch (_) {
+        inserted = false;
+      }
+    }
+
+    // 6. Fallback: Dispatch synthetic InputEvent (beforeinput + input)
+    if (!inserted) {
+      try {
+        if (typeof InputEvent !== 'undefined') {
+          const beforeInput = new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: formattedText
+          });
+          targetInput.dispatchEvent(beforeInput);
+
+          const inputEvt = new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: formattedText
+          });
+          targetInput.dispatchEvent(inputEvt);
+          inserted = true;
+        }
+      } catch (_) {}
+    }
+
+    // 7. Fallback for contenteditable code editors (e.g. CodeMirror 6)
+    if (!inserted && isContentEditable && targetInput) {
+      try {
+        targetInput.textContent = formattedText;
+        targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+        targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        inserted = true;
+      } catch (_) {}
+    }
+
+    // 8. Fallback for proxy textarea / input
+    if (!inserted && targetInput && 'value' in targetInput) {
+      try {
+        const proto = targetInput instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(targetInput, formattedText);
+        else targetInput.value = formattedText;
+        targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+        targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        inserted = true;
+      } catch (_) {}
+    }
+
+    // 9. Fire final change and keyup events
+    try {
+      if (targetInput) {
+        targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+        targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        targetInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'End', code: 'End', bubbles: true }));
+      }
+      container.dispatchEvent(new Event('input', { bubbles: true }));
+      container.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (_) {}
+
+    return inserted;
   }
 
   // --- Semantic & Interactive Identification Helpers ---
   function computeAriaRole(el) {
     if (!el) return null;
+    if (el.classList?.contains('monaco-editor') || el.classList?.contains('cm-editor') ||
+        el.classList?.contains('CodeMirror') || el.classList?.contains('ace_editor')) {
+      return 'code-editor';
+    }
     const explicitRole = el.getAttribute ? el.getAttribute('role') : null;
     if (explicitRole) return explicitRole.trim().toLowerCase();
 
@@ -84,6 +336,14 @@
 
   function getSemanticName(el) {
     if (!el) return '';
+    if (isCodeEditorElement(el)) {
+      const mode = el.getAttribute?.('data-mode-id') || el.closest?.('[data-mode-id]')?.getAttribute('data-mode-id');
+      const editorTitle = el.getAttribute?.('aria-label') || el.getAttribute?.('title');
+      if (editorTitle) return editorTitle.slice(0, 100);
+      if (mode) return `${mode.toUpperCase()} Code Editor`;
+      return 'Code Editor';
+    }
+
     const labelledby = el.getAttribute ? el.getAttribute('aria-labelledby') : null;
     if (labelledby) {
       const labels = labelledby.split(/\s+/).map(id => document.getElementById(id)?.textContent?.trim()).filter(Boolean);
@@ -130,6 +390,7 @@
 
   function isNaturallyInteractive(el) {
     if (!el || el === document.body || el === document.documentElement) return false;
+    if (isCodeEditorElement(el)) return true;
     const tag = getSafeTagName(el);
     if (['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'].includes(tag)) return true;
     if (el.hasAttribute && el.hasAttribute('role')) {
@@ -182,7 +443,13 @@
       '[role="menuitem"]',
       '[role="option"]',
       '[role="combobox"]',
-      '[contenteditable="true"]'
+      '[role="code"]',
+      '[contenteditable="true"]',
+      '.monaco-editor',
+      '.cm-editor',
+      '.CodeMirror',
+      '.ace_editor',
+      '[data-mode-id]'
     ].join(', ');
 
     const nodes = Array.from(document.querySelectorAll(selector));
@@ -207,13 +474,28 @@
         const interactiveAncestor = getNearestInteractiveAncestor(el);
         const isActionable = !interactiveAncestor || isNaturallyInteractive(el);
 
+        const editorCtx = findCodeEditorContext(el);
+        const isEditorContainer = !!editorCtx && (editorCtx.container === el);
+
+        let type = el.getAttribute('type') || role || '';
+        if (isEditorContainer) {
+          type = 'code-editor';
+        }
+
+        let elText = text;
+        if (isEditorContainer && !elText) {
+          const preview = (editorCtx.contentElement?.innerText || editorCtx.container?.innerText || '')
+            .trim().replace(/\s+/g, ' ').slice(0, 120);
+          elText = preview || semanticName || 'Code Editor';
+        }
+
         const item = {
           target_id: assignId(el),
           tag: getSafeTagName(el),
-          type: el.getAttribute('type') || role || '',
-          text: text || semanticName || '',
-          actionable: isActionable,
-          clickable: isNaturallyInteractive(el) || !interactiveAncestor
+          type,
+          text: elText || semanticName || '',
+          actionable: isActionable || isEditorContainer,
+          clickable: isNaturallyInteractive(el) || !interactiveAncestor || isEditorContainer
         };
 
         if (semanticName && semanticName !== text) {
@@ -224,7 +506,7 @@
           item.interactive_ancestor = {
             target_id: assignId(interactiveAncestor),
             tag: getSafeTagName(interactiveAncestor),
-            role: computeAriaRole(interactiveAncestor) || 'link',
+            role: computeAriaRole(interactiveAncestor) || (isCodeEditorElement(interactiveAncestor) ? 'code-editor' : 'link'),
             name: getSemanticName(interactiveAncestor) || (interactiveAncestor.innerText || '').trim().slice(0, 40)
           };
         }
@@ -271,16 +553,41 @@
     switch (action.action) {
       case 'click': {
         const el = findEl(action.target_id);
+        const editorCtx = findCodeEditorContext(el);
+        if (editorCtx) {
+          if (typeof editorCtx.container.scrollIntoView === 'function') {
+            editorCtx.container.scrollIntoView({ block: 'center', behavior: 'instant' });
+          }
+          editorCtx.container.click();
+          if (editorCtx.inputElement && typeof editorCtx.inputElement.focus === 'function') {
+            editorCtx.inputElement.focus();
+          }
+          return;
+        }
         // Generic resolution: If the targeted element is an inner non-interactive element
         // (e.g. badge span, icon svg) inside an actionable container (a, button, [role="button"]),
         // resolve to the actionable container so default navigation and React event dispatchers are invoked properly.
-        const target = (!isNaturallyInteractive(el) && el.closest('a, button, [role="button"], [role="link"], [contenteditable="true"]')) || el;
-        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const target = (!isNaturallyInteractive(el) && el.closest('a, button, [role="button"], [role="link"], [contenteditable="true"], .monaco-editor, .cm-editor, .CodeMirror, .ace_editor, [role="code"]')) || el;
+        if (typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }
         target.click();
         return;
       }
       case 'type': {
         const el = findEl(action.target_id);
+        let editorCtx = findCodeEditorContext(el);
+        if (!editorCtx && el) {
+          const closestEditor = el.closest?.('.monaco-editor, .cm-editor, .CodeMirror, .ace_editor, [role="code"], [data-mode-id]');
+          if (closestEditor) {
+            editorCtx = findCodeEditorContext(closestEditor);
+          }
+        }
+        if (editorCtx) {
+          await typeIntoCodeEditor(editorCtx, action.value);
+          return;
+        }
+
         el.focus();
         if ('value' in el) {
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -299,21 +606,24 @@
       }
       case 'press': {
         const el = findEl(action.target_id);
+        const editorCtx = findCodeEditorContext(el);
+        const targetEl = editorCtx?.inputElement || el;
+
         const keyMap = { ENTER: 'Enter', TAB: 'Tab', ESC: 'Escape', BACKSPACE: 'Backspace' };
         const key = keyMap[action.value] || action.value;
         const keyCode = key === 'Enter' ? 13 : key === 'Tab' ? 9 : key === 'Escape' ? 27 : 0;
 
         const opts = { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true };
-        el.dispatchEvent(new KeyboardEvent('keydown', opts));
-        el.dispatchEvent(new KeyboardEvent('keypress', opts));
-        el.dispatchEvent(new KeyboardEvent('keyup', opts));
+        targetEl.dispatchEvent(new KeyboardEvent('keydown', opts));
+        targetEl.dispatchEvent(new KeyboardEvent('keypress', opts));
+        targetEl.dispatchEvent(new KeyboardEvent('keyup', opts));
 
         // Form submission fallback for Enter press in search fields
-        if (key === 'Enter' && el.form) {
-          if (typeof el.form.requestSubmit === 'function') {
-            el.form.requestSubmit();
+        if (key === 'Enter' && targetEl.form) {
+          if (typeof targetEl.form.requestSubmit === 'function') {
+            targetEl.form.requestSubmit();
           } else {
-            el.form.submit();
+            targetEl.form.submit();
           }
         }
         return;
@@ -334,17 +644,18 @@
   // --- Milestone M2: Semantic DOM Perception & Spatial Analysis ---
   function computeInteractivity(el, role) {
     const tag = getSafeTagName(el);
+    const isCodeEditor = isCodeEditorElement(el);
     const interactiveTags = ['a', 'button', 'input', 'select', 'textarea', 'summary', 'details'];
-    const interactiveRoles = ['button', 'link', 'checkbox', 'tab', 'searchbox', 'menuitem', 'option', 'combobox', 'switch', 'radio', 'textbox', 'slider'];
+    const interactiveRoles = ['button', 'link', 'checkbox', 'tab', 'searchbox', 'menuitem', 'option', 'combobox', 'switch', 'radio', 'textbox', 'slider', 'code-editor'];
 
     const isClickable = interactiveTags.includes(tag) || (role && interactiveRoles.includes(role)) ||
-      el.hasAttribute('onclick') || window.getComputedStyle(el).cursor === 'pointer';
+      el.hasAttribute('onclick') || window.getComputedStyle(el).cursor === 'pointer' || isCodeEditor;
 
     const isEditable = tag === 'textarea' ||
       (tag === 'input' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'hidden'].includes((el.type || '').toLowerCase())) ||
-      el.isContentEditable || el.getAttribute('contenteditable') === 'true';
+      el.isContentEditable || el.getAttribute('contenteditable') === 'true' || isCodeEditor;
 
-    const isFocusable = isClickable || isEditable || (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1');
+    const isFocusable = isClickable || isEditable || (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') || isCodeEditor;
     const isEnabled = !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true';
 
     return {
@@ -575,10 +886,12 @@
     function pushCandidate(img, matchType) {
       if (seen.has(img)) return;
       const rect = img.getBoundingClientRect();
-      if (rect.width < 16 || rect.height < 16) return;
+      if (rect.width < 12 || rect.height < 12) return;
       if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= vpWidth || rect.top >= vpHeight) return;
       const aspect = rect.width / rect.height;
-      if (aspect < 0.4 || aspect > 2.5) return;
+      // Widened from 0.4-2.5 to 0.3-3.2 to keep sensitivity high per request —
+      // catch cropped/tilted/side-profile images instead of discarding them early.
+      if (aspect < 0.3 || aspect > 3.2) return;
       seen.add(img);
       regions.push({
         id: assignId(img),
@@ -595,16 +908,18 @@
 
     const allImgs = Array.from(document.querySelectorAll('img'));
     for (const img of allImgs) {
-      if (regions.length >= 12) break;
+      if (regions.length >= 20) break;
       if (seen.has(img)) continue;
       const rect = img.getBoundingClientRect();
-      if (rect.width < 24 || rect.width > 400 || rect.height < 24 || rect.height > 400) continue;
+      // Widened size window (was 24-400) so smaller thumbnails and larger
+      // hero/profile photos both get evaluated instead of skipped.
+      if (rect.width < 16 || rect.width > 700 || rect.height < 16 || rect.height > 700) continue;
       pushCandidate(img, 'heuristic');
     }
 
     return {
       viewport: { width: vpWidth, height: vpHeight, devicePixelRatio: window.devicePixelRatio || 1 },
-      regions: regions.slice(0, 12)
+      regions: regions.slice(0, 20)
     };
   }
 
@@ -662,6 +977,20 @@
     return true; // Keep message channel open for async response
   }
 
+  if (typeof window !== 'undefined') {
+    window.__ravenContentHelpers = {
+      findCodeEditorContext,
+      typeIntoCodeEditor,
+      extractElements,
+      executeAction,
+      isNaturallyInteractive,
+      computeInteractivity,
+      isCodeEditorElement
+    };
+  }
+
   window.__geminiAgentListener = onMessage;
-  chrome.runtime.onMessage.addListener(onMessage);
+  if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener(onMessage);
+  }
 })();

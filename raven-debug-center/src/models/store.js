@@ -20,6 +20,7 @@ class RavenStore {
         reconnectAttempts: 0
       },
       telemetry: {
+        userTask: null,
         iteration: 0,
         currentUrl: null,
         pageTitle: null,
@@ -133,6 +134,7 @@ class RavenStore {
         leakCheckPassed: null
       },
       agent: {
+        task: null,
         observationSent: null,
         requestTimestamp: null,
         geminiResponse: null,

@@ -1,47 +1,160 @@
-body {
-  max-width: 520px;
-  margin: 40px auto;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #1b1b1f;
-  padding: 0 16px;
+﻿@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg-deep: #080811;
+  --bg-card: rgba(18, 16, 36, 0.8);
+  --border-glow: rgba(168, 85, 247, 0.3);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
 }
-h1 {
-  font-size: 18px;
-}
-p {
-  font-size: 13px;
-  color: #444;
-  line-height: 1.5;
-}
-p.hint {
-  font-size: 12px;
-  color: #666;
-}
-textarea {
-  width: 100%;
+
+* {
   box-sizing: border-box;
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+  margin: 0;
+  padding: 0;
 }
+
+body {
+  background-color: var(--bg-deep);
+  background-image: 
+    radial-gradient(circle at 10% 0%, rgba(157, 78, 221, 0.2) 0%, transparent 40%),
+    radial-gradient(circle at 90% 10%, rgba(236, 72, 153, 0.15) 0%, transparent 40%),
+    linear-gradient(180deg, #090817 0%, #05040d 100%);
+  color: var(--text-main);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 30px;
+  display: flex;
+  justify-content: center;
+}
+
+.options-container {
+  width: 100%;
+  max-width: 540px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo-frame {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(168, 85, 247, 0.2);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #ffffff 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: #a78bfa;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-glow);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+h2 {
+  font-size: 15px;
+  color: #ffffff;
+}
+
+.description {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+textarea#keys {
+  width: 100%;
+  background: rgba(10, 9, 20, 0.9);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 10px;
+  padding: 12px;
+  color: #ffffff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  resize: vertical;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+textarea#keys:focus {
+  border-color: #c084fc;
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
+}
+
 .row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
 }
-button {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background: #2563eb;
-  color: white;
+
+button#saveBtn {
+  background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+  border: 1px solid rgba(216, 180, 254, 0.35);
+  color: #ffffff;
+  font-weight: 600;
   font-size: 13px;
+  padding: 8px 20px;
+  border-radius: 8px;
   cursor: pointer;
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.35);
+  transition: all 0.2s ease;
 }
+
+button#saveBtn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
 #savedMsg {
   font-size: 12px;
-  color: #16a34a;
+  color: #34d399;
+  font-weight: 600;
+}
+
+.hint {
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+.hint a {
+  color: #c084fc;
+  text-decoration: none;
+}
+
+.hint a:hover {
+  text-decoration: underline;
 }
