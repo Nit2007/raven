@@ -119,7 +119,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; 
 });
 
-async function handleMessage(msg) {
+async function handleMessage(msg, sender) {
   switch (msg.type) {
     case 'START_TASK':
       return startTask(msg.tabId, msg.task);
@@ -160,6 +160,80 @@ async function handleMessage(msg) {
         m5Result: getLastM5Result(),
         perceptionCycleId: `manual-${Date.now()}`
       });
+    }
+    case 'SET_EDITOR_VALUE_MAIN_WORLD': {
+      const tabId = sender?.tab?.id || (await resolveTargetTabId(msg.tabId));
+      if (!tabId) return { ok: false, error: 'No active tab for editor injection' };
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (code) => {
+            try {
+              // 1. Monaco Editor (LeetCode, VS Code Web, StackBlitz, Codespaces)
+              if (window.monaco && window.monaco.editor) {
+                const models = window.monaco.editor.getModels ? window.monaco.editor.getModels() : [];
+                if (models && models.length > 0) {
+                  models[0].setValue(code);
+                  return { ok: true, engine: 'monaco-models' };
+                }
+                const editors = window.monaco.editor.getEditors ? window.monaco.editor.getEditors() : [];
+                for (const ed of editors) {
+                  if (typeof ed.setValue === 'function') {
+                    ed.setValue(code);
+                    if (typeof ed.focus === 'function') ed.focus();
+                    return { ok: true, engine: 'monaco-editors' };
+                  }
+                }
+              }
+
+              // Monaco fallback via require if present
+              if (!window.monaco && typeof window.require === 'function') {
+                try {
+                  const m = window.require('vs/editor/editor.main');
+                  const models = m?.editor?.getModels ? m.editor.getModels() : [];
+                  if (models && models.length > 0) {
+                    models[0].setValue(code);
+                    return { ok: true, engine: 'monaco-require-models' };
+                  }
+                } catch (_) {}
+              }
+
+              // 2. CodeMirror 5
+              const cm5 = document.querySelector('.CodeMirror')?.CodeMirror;
+              if (cm5 && typeof cm5.setValue === 'function') {
+                cm5.setValue(code);
+                return { ok: true, engine: 'codemirror5' };
+              }
+
+              // 3. CodeMirror 6
+              const cm6 = document.querySelector('.cm-editor');
+              if (cm6 && cm6.cmView && cm6.cmView.view) {
+                const view = cm6.cmView.view;
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
+                return { ok: true, engine: 'codemirror6' };
+              }
+
+              // 4. Ace Editor
+              if (window.ace) {
+                const aceEl = document.querySelector('.ace_editor');
+                if (aceEl && window.ace.edit) {
+                  window.ace.edit(aceEl).setValue(code);
+                  return { ok: true, engine: 'ace' };
+                }
+              }
+
+              return { ok: false, error: 'No recognized code editor found in page context' };
+            } catch (err) {
+              return { ok: false, error: String(err) };
+            }
+          },
+          args: [msg.code]
+        });
+        return { ok: true, result: results?.[0]?.result };
+      } catch (err) {
+        return { ok: false, error: String(err) };
+      }
     }
     case 'GET_STATUS':
       return { ok: true, status: await getTaskState(msg.tabId) };
@@ -332,10 +406,18 @@ async function runLoop(tabId) {
           // Update treeMemory in task state
           state.treeMemory = treeMemory.toJSON();
 
+          // CRITICAL PRIVACY GUARD: Verify that outbound visual context is strictly M6-sanitized
+          const rawM1Screenshot = m1Result?.data?.screenshot || m1Result?.screenshot;
+          const outboundScreenshot = sanitizedObservation.sanitizedScreenshot?.dataUrl || sanitizedObservation.sanitizedScreenshot?.base64;
+          if (m5Result?.facesDetected > 0 && rawM1Screenshot && outboundScreenshot && (rawM1Screenshot === outboundScreenshot)) {
+            throw new Error('[SECURITY FATAL] Outbound visual observation is unredacted raw M1 screenshot! Aborted before Gemini transmission.');
+          }
+
           const action = await client.chooseNextAction(
             state.task,
             {
               ...sanitizedObservation,
+              sanitizedScreenshot: sanitizedObservation.sanitizedScreenshot || m6Result.data?.sanitizedScreenshot || null,
               pageHash: sanitizedObservation.pageHash,
               visitCount,
               actionHistory: state.history,

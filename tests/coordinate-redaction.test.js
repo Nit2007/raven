@@ -25,7 +25,7 @@ import {
   validateBoundingBox,
   createCoordinateTelemetry
 } from '../gemini-browser-agent/gemini-browser-agent/coordinate-utils.js';
-import { runM6PerceptionFusion, redactVisualCanvas } from '../gemini-browser-agent/gemini-browser-agent/m6-fusion.js';
+import { runM6PerceptionFusion, redactVisualCanvas, validateZeroLeakPrivacy } from '../gemini-browser-agent/gemini-browser-agent/m6-fusion.js';
 
 // Mock helper to create synthetic Canvas-like object
 function createMockCanvas(width, height) {
@@ -470,4 +470,112 @@ test('Test 13: Whole image blurred without bounding box, blur strictly inside im
   // Strictly ZERO bounding box outline
   const strokeOps = ops.filter(o => o.op === 'strokeRect');
   assert.equal(strokeOps.length, 0);
+});
+
+test('Test 14: Small image and multi-face composite image analysis and localized redaction', async () => {
+  const canvasW = 1024;
+  const canvasH = 768;
+  const mockCanvas = createMockCanvas(canvasW, canvasH);
+
+  // 1. Small avatar image (e.g. 24x24 px)
+  const smallAvatar = {
+    id: 'small-avatar-1',
+    type: 'face',
+    category: 'Face / Avatar',
+    box: { x: 50, y: 50, width: 24, height: 24 },
+    imageBox: { x: 50, y: 50, width: 24, height: 24 },
+    sourceSpace: CANONICAL_COORDINATE_SPACE,
+    sourceDimensions: { width: canvasW, height: canvasH }
+  };
+
+  // 2. Large composite photo containing multi-face grid (e.g. 500x320 px)
+  const compositePhoto = {
+    id: 'composite-multi-face-photo',
+    type: 'face',
+    category: 'Face / Avatar',
+    box: { x: 120, y: 100, width: 500, height: 320 },
+    imageBox: { x: 120, y: 100, width: 500, height: 320 },
+    sourceSpace: CANONICAL_COORDINATE_SPACE,
+    sourceDimensions: { width: canvasW, height: canvasH }
+  };
+
+  const m6Result = await runM6PerceptionFusion({
+    m1Result: { image: { width: canvasW, height: canvasH } },
+    m5Result: { items: [smallAvatar, compositePhoto] },
+    observation: { url: 'https://example.com/gallery', title: 'Gallery' }
+  });
+
+  assert.equal(m6Result.ok, true);
+  const redactions = m6Result.data.redactionRegions.filter(r => r.type === 'face');
+  assert.equal(redactions.length, 2);
+
+  // Redact both on canvas
+  await redactVisualCanvas(mockCanvas, redactions, { width: canvasW, height: canvasH });
+  const ops = mockCanvas.getOperations();
+
+  const fillOps = ops.filter(o => o.op === 'fillRect');
+  assert.equal(fillOps.length, 2);
+
+  // Both strictly stay within their respective image bounds
+  assert.equal(fillOps[0].x, 50);
+  assert.equal(fillOps[0].y, 50);
+  assert.equal(fillOps[0].w, 24);
+  assert.equal(fillOps[0].h, 24);
+
+  assert.equal(fillOps[1].x, 120);
+  assert.equal(fillOps[1].y, 100);
+  assert.equal(fillOps[1].w, 500);
+  assert.equal(fillOps[1].h, 320);
+
+  // Zero bounding box outlines
+  const strokeOps = ops.filter(o => o.op === 'strokeRect');
+  assert.equal(strokeOps.length, 0);
+});
+
+test('Test 15: Sanitized screenshot transmission & privacy verification', async () => {
+  const canvasW = 1024;
+  const canvasH = 768;
+  const rawDataUrl = 'data:image/png;base64,RAW_UNREDACTED_M1_IMAGE_DATA_XYZ';
+  const redactedDataUrl = 'data:image/png;base64,REDACTED_M5_M6_SANITIZED_DATA_ABC';
+
+  const rawFace = {
+    id: 'face-sensitive',
+    type: 'face',
+    category: 'Face / Avatar',
+    box: { x: 100, y: 100, width: 80, height: 80 },
+    sourceSpace: CANONICAL_COORDINATE_SPACE,
+    sourceDimensions: { width: canvasW, height: canvasH }
+  };
+
+  // Case 1: M5 provided redacted screenshot -> M6 generates certified sanitizedScreenshot
+  const m6Result = await runM6PerceptionFusion({
+    m1Result: { screenshot: rawDataUrl, image: { width: canvasW, height: canvasH } },
+    m5Result: { items: [rawFace], redactedScreenshotUrl: redactedDataUrl },
+    observation: { url: 'https://example.com', title: 'Example' }
+  });
+
+  assert.equal(m6Result.ok, true);
+  assert.ok(m6Result.data.sanitizedScreenshot);
+  assert.equal(m6Result.data.sanitizedScreenshot.isSanitized, true);
+  assert.equal(m6Result.data.sanitizedScreenshot.sanitizedBy, 'M6_PERCEPTION_FUSION');
+  assert.equal(m6Result.data.sanitizedScreenshot.base64, 'REDACTED_M5_M6_SANITIZED_DATA_ABC');
+
+  // Case 2: Attempting to leak unredacted raw screenshot fails Privacy Gate
+  const leakCheck = validateZeroLeakPrivacy(
+    {
+      title: 'Leak Test',
+      elements: [],
+      sanitizedScreenshot: {
+        dataUrl: rawDataUrl,
+        base64: 'RAW_UNREDACTED_M1_IMAGE_DATA_XYZ',
+        isSanitized: true
+      }
+    },
+    [rawFace],
+    [],
+    { rawScreenshot: rawDataUrl }
+  );
+
+  assert.equal(leakCheck.passed, false, 'Privacy gate must fail if outbound image is identical to raw unredacted M1 screenshot');
+  assert.ok(leakCheck.leaks.some(l => l.includes('Unredacted raw screenshot detected')));
 });

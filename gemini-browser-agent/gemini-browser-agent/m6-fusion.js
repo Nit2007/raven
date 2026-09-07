@@ -680,14 +680,69 @@ export async function redactVisualCanvas(canvasOrBitmap, boundingBoxes = [], sou
   }
 }
 
-// --- Post-Redaction Verification & Fail-Closed Gate ---
-export function validateZeroLeakPrivacy(payload, sensitiveItems = [], rawDetections = []) {
-  const leaks = [];
-  const payloadStr = JSON.stringify(payload);
+// Helper to convert Blob to Data URL across Browser and Node environments
+function blobToDataUrl(blob) {
+  if (!blob) return Promise.resolve(null);
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+  if (typeof blob.arrayBuffer === 'function' && typeof Buffer !== 'undefined') {
+    return blob.arrayBuffer().then(buf => {
+      const b64 = Buffer.from(buf).toString('base64');
+      return `data:image/png;base64,${b64}`;
+    });
+  }
+  return Promise.resolve(null);
+}
 
-  // 1. Raw screenshot bitmap leak check (NEVER permit base64 screenshot in outbound observation)
-  if (payloadStr.includes('data:image/png;base64') || payloadStr.includes('data:image/jpeg;base64')) {
-    leaks.push('Raw image bitmap detected in outbound payload');
+// --- Post-Redaction Verification & Fail-Closed Gate ---
+export function validateZeroLeakPrivacy(payload, sensitiveItems = [], rawDetections = [], options = {}) {
+  const leaks = [];
+
+  // 1. Image Sanitization & Zero-Leak Verification
+  // Invariant: Raw unredacted M1 screenshot is NEVER permitted.
+  // Invariant: Certified sanitized screenshot produced by M6 after local redaction IS permitted.
+  const rawScreenshot = options.rawScreenshot || '';
+  const sanitizedScreenshot = payload?.sanitizedScreenshot || null;
+
+  // A. Check for raw image bitmaps leaking into textual fields
+  const textCorpus = [
+    payload?.title || '',
+    ...(payload?.visibleText || []),
+    ...(payload?.elements || []).map(e => `${e.text || ''} ${e.name || ''} ${e.value || ''} ${e.placeholder || ''} ${e.aria_label || ''}`)
+  ].join(' ');
+
+  if (textCorpus.includes('data:image/png;base64') || textCorpus.includes('data:image/jpeg;base64')) {
+    leaks.push('Raw image bitmap detected in outbound text fields');
+  }
+
+  // B. Verify sanitized screenshot integrity if present
+  if (sanitizedScreenshot) {
+    const rawData = typeof rawScreenshot === 'string' ? rawScreenshot : (rawScreenshot?.dataUrl || rawScreenshot?.base64 || '');
+    const sanitizedData = typeof sanitizedScreenshot === 'string' ? sanitizedScreenshot : (sanitizedScreenshot?.dataUrl || sanitizedScreenshot?.base64 || '');
+
+    // If sensitive items were detected, sanitized data MUST NOT match raw unredacted data!
+    if (sensitiveItems.length > 0 && rawData && sanitizedData && (rawData === sanitizedData)) {
+      leaks.push('Unredacted raw screenshot detected: matches raw M1 capture despite sensitive detections');
+    }
+
+    // Must carry M6 certification
+    if (typeof sanitizedScreenshot === 'object' && !sanitizedScreenshot.isSanitized) {
+      leaks.push('Uncertified visual screenshot in payload: missing M6 sanitization certification');
+    }
+  }
+
+  // C. Ensure other fields in payload do not leak unredacted raw screenshots
+  const payloadCopy = { ...payload };
+  delete payloadCopy.sanitizedScreenshot;
+  const payloadStrWithoutImage = JSON.stringify(payloadCopy);
+  if (payloadStrWithoutImage.includes('data:image/png;base64') || payloadStrWithoutImage.includes('data:image/jpeg;base64')) {
+    leaks.push('Raw image bitmap detected in outbound observation fields');
   }
 
   // 2. Sensitive text presence check (ensures raw strings are 100% purged from visible text/content)
@@ -701,12 +756,6 @@ export function validateZeroLeakPrivacy(payload, sensitiveItems = [], rawDetecti
     ...rawDetections.map(d => d.rawText).filter(Boolean)
   ].filter(v => !HTML_STRUCTURAL_TOKENS.has(v.toLowerCase()));
 
-  const textCorpus = [
-    payload?.title || '',
-    ...(payload?.visibleText || []),
-    ...(payload?.elements || []).map(e => `${e.text || ''} ${e.name || ''} ${e.value || ''} ${e.placeholder || ''} ${e.aria_label || ''}`)
-  ].join(' ');
-
   for (const rawVal of valuesToCheck) {
     if (rawVal.length >= 3 && textCorpus.includes(rawVal)) {
       leaks.push(`Unredacted sensitive value detected in sanitized text: "${rawVal.slice(0, 3)}***"`);
@@ -714,12 +763,13 @@ export function validateZeroLeakPrivacy(payload, sensitiveItems = [], rawDetecti
   }
 
   // 3. Regex scan for critical secrets (API keys, unmasked tokens)
-  if (/\b(?:AIza[0-9A-Za-z-_]{30,35}|sk-[a-zA-Z0-9]{20,})\b/.test(payloadStr)) {
+  const fullPayloadStr = JSON.stringify(payload);
+  if (/\b(?:AIza[0-9A-Za-z-_]{30,35}|sk-[a-zA-Z0-9]{20,})\b/.test(fullPayloadStr)) {
     leaks.push('API key pattern detected in outbound payload');
   }
 
   // 4. Raw credit card unmasked pattern check
-  if (/\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(payloadStr)) {
+  if (/\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(fullPayloadStr)) {
     leaks.push('Unmasked 16-digit payment card pattern detected in payload');
   }
 
@@ -908,13 +958,53 @@ export async function runM6PerceptionFusion(inputs = {}) {
       timestamp
     };
 
+    // 4.5. Generate / Finalize M6 Sanitized Screenshot
+    let sanitizedScreenshot = null;
+    const m5Redacted = inputs.m5Result?.redactedScreenshotUrl || inputs.m5Result?.data?.redactedScreenshotUrl || null;
+    const m1Raw = inputs.m1Result?.data?.screenshot || inputs.m1Result?.screenshot || null;
+
+    let finalScreenshotDataUrl = m5Redacted;
+
+    // If no pre-redacted screenshot from M5, apply redactVisualCanvas to m1Raw locally
+    if (!finalScreenshotDataUrl && m1Raw && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const blob = await (await fetch(m1Raw)).blob();
+        const bitmap = await createImageBitmap(blob);
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        await redactVisualCanvas(canvas, unifiedRedactionRegions, { width: tgtW, height: tgtH });
+        const outBlob = await canvas.convertToBlob({ type: 'image/png' });
+        finalScreenshotDataUrl = await blobToDataUrl(outBlob);
+      } catch (_) {
+        finalScreenshotDataUrl = null;
+      }
+    }
+
+    if (finalScreenshotDataUrl) {
+      const base64Clean = finalScreenshotDataUrl.replace(/^data:image\/[^;]+;base64,/, '');
+      sanitizedScreenshot = {
+        dataUrl: finalScreenshotDataUrl,
+        base64: base64Clean,
+        mimeType: 'image/png',
+        isSanitized: true,
+        sanitizedBy: 'M6_PERCEPTION_FUSION',
+        sensitiveRedacted: unifiedRedactionRegions.length,
+        timestamp: new Date().toISOString()
+      };
+      sanitizedObservation.sanitizedScreenshot = sanitizedScreenshot;
+    }
+
     // 5. Post-Redaction Verification & Strict Fail-Closed Gate
-    const leakCheck = validateZeroLeakPrivacy(sanitizedObservation, m5Items, textDetections);
+    const leakCheck = validateZeroLeakPrivacy(sanitizedObservation, m5Items, textDetections, {
+      rawScreenshot: m1Raw
+    });
     const privacyGatePassed = leakCheck.passed;
     const leakCheckPassed = leakCheck.passed;
 
     if (!privacyGatePassed) {
-      // FAIL CLOSED: If privacy validation fails, do not release unsafe observation
+      // FAIL CLOSED: If privacy validation fails, strip screenshot and block release
+      delete sanitizedObservation.sanitizedScreenshot;
       const blockedReason = `Privacy Gate blocked observation release: ${leakCheck.leaks.join('; ')}`;
       await broadcastTelemetry({
         type: 'SECURITY_WARNING',
@@ -951,6 +1041,7 @@ export async function runM6PerceptionFusion(inputs = {}) {
       redactionRegions: unifiedRedactionRegions,
       privacyGatePassed,
       leakCheckPassed,
+      sanitizedScreenshot,
       sanitizedObservation
     };
 
