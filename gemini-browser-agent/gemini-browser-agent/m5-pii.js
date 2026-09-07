@@ -19,6 +19,12 @@
  */
 
 import { getLastM1Result } from './m1-capture.js';
+import {
+  CANONICAL_COORDINATE_SPACE,
+  normalizeVisualRegionToM1,
+  validateBoundingBox,
+  createCoordinateTelemetry
+} from './coordinate-utils.js';
 
 let lastM5Result = null;
 export function getLastM5Result() {
@@ -29,19 +35,23 @@ export function getLastM5Result() {
 // SENSITIVITY MODE: tuned for maximum recall per explicit request — "if it
 // looks like face/skin, blur it." This trades away precision (more
 // non-faces will get blurred) in exchange for far fewer missed real faces.
+// UPDATED: Guarded by strict canonical coordinate normalization, localized
+// area sanity check, and prevention of chained union boxes.
 const CFG = {
-  MAX_REGIONS: 20,
-  DOWNSCALE_WIDTH: 112,          // raised again for finer-grained blob edges at low cost
-  MIN_BLOB_AREA_RATIO: 0.005,    // was 0.012 — catches small/partial/distant faces
+  MAX_REGIONS: 25,
+  DOWNSCALE_WIDTH: 112,          // downscaled mask width for fast blob analysis
+  MIN_BLOB_AREA_RATIO: 0.005,    // catches small/partial/distant faces
   MAX_BLOB_AREA_RATIO: 0.97,
-  MIN_ASPECT: 0.30,              // was 0.4 — tolerate tilted/cropped/side-profile boxes
-  MAX_ASPECT: 2.8,               // was 2.2
-  MIN_FILL_RATIO: 0.20,          // was 0.28 — accept looser/less solid blobs
-  FALLBACK_SKIN_RATIO: 0.16,     // was 0.22 — lower bar for "probably skin"
-  MERGE_DISTANCE_PX: 7,          // was 4 — merges nearby fragments (e.g. face split by glare/hair) into one box
-  PADDING_RATIO: 0.38,           // was 0.28 — bigger safety margin blurred around every detected region
+  MAX_FACE_COVERAGE_RATIO: 0.45, // Area sanity check: face cannot cover >= 45% of viewport
+  MAX_CANDIDATE_DIM_RATIO: 0.50, // Candidate cannot span >= 50% width or height
+  MIN_ASPECT: 0.30,              // tolerate tilted/cropped/side-profile boxes
+  MAX_ASPECT: 2.8,
+  MIN_FILL_RATIO: 0.20,          // accept looser/less solid blobs
+  FALLBACK_SKIN_RATIO: 0.16,     // lower bar for "probably skin"
+  MERGE_DISTANCE_PX: 1,          // was 7 — set to 1 so distant faces (e.g. Google Images) never chain into one giant union box
+  PADDING_RATIO: 0.38,           // safety margin blurred around every detected region
   BLUR_PASSES: 5,
-  BLUR_RADIUS_RATIO: 0.42,       // was 0.32 — stronger blur so partial/uncertain hits are still well obscured
+  BLUR_RADIUS_RATIO: 0.42,       // stronger blur so hits are well obscured
   MIN_BLUR_RADIUS: 10,
   MAX_BLUR_RADIUS: 60,
   THUMB_SIZE: 120,
@@ -131,7 +141,7 @@ function findBlobs(mask, w, h) {
   return blobs;
 }
 
-function mergeBlobs(blobs, dist) {
+function mergeBlobs(blobs, dist, maxW = 35, maxH = 35) {
   const merged = [];
   const used = new Array(blobs.length).fill(false);
   for (let i = 0; i < blobs.length; i++) {
@@ -147,8 +157,17 @@ function mergeBlobs(blobs, dist) {
         const ox = cur.minX - dist <= b.maxX && b.minX - dist <= cur.maxX;
         const oy = cur.minY - dist <= b.maxY && b.minY - dist <= cur.maxY;
         if (ox && oy) {
-          cur.minX = Math.min(cur.minX, b.minX); cur.maxX = Math.max(cur.maxX, b.maxX);
-          cur.minY = Math.min(cur.minY, b.minY); cur.maxY = Math.max(cur.maxY, b.maxY);
+          const newMinX = Math.min(cur.minX, b.minX);
+          const newMaxX = Math.max(cur.maxX, b.maxX);
+          const newMinY = Math.min(cur.minY, b.minY);
+          const newMaxY = Math.max(cur.maxY, b.maxY);
+
+          // Prevent chained merging across multiple distinct faces into a giant union box
+          if (maxW && (newMaxX - newMinX + 1) > maxW) continue;
+          if (maxH && (newMaxY - newMinY + 1) > maxH) continue;
+
+          cur.minX = newMinX; cur.maxX = newMaxX;
+          cur.minY = newMinY; cur.maxY = newMaxY;
           cur.area += b.area; used[j] = true; changed = true;
         }
       }
@@ -166,6 +185,17 @@ function mergeBlobs(blobs, dist) {
 function verifyFacialStructure(pixelData, imgW, imgH, box) {
   const { x, y, width: bw, height: bh } = box;
   if (bw < 10 || bh < 10) return { isFace: false, reason: 'too_small' };
+
+  // Area sanity check: face regions are localized; giant coverage indicates non-face / whole-page
+  const regionArea = bw * bh;
+  const imageArea = (imgW || 1) * (imgH || 1);
+  const coverageRatio = regionArea / imageArea;
+  if (coverageRatio >= (CFG.MAX_FACE_COVERAGE_RATIO || 0.45)) {
+    return { isFace: false, reason: 'suspiciously_large_coverage_ratio', coverageRatio };
+  }
+  if (bw > (imgW * (CFG.MAX_CANDIDATE_DIM_RATIO || 0.50)) || bh > (imgH * (CFG.MAX_CANDIDATE_DIM_RATIO || 0.50))) {
+    return { isFace: false, reason: 'dimensions_exceed_face_limit', bw, bh };
+  }
 
   const aspect = bw / bh;
   // Widened from the strict 0.60-1.45 face-only window so tilted heads,
@@ -273,7 +303,7 @@ function verifyFacialStructure(pixelData, imgW, imgH, box) {
     return {
       isFace: true,
       confidence,
-      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'strict_biometric' }
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), coverageRatio: Number(coverageRatio.toFixed(3)), path: 'strict_biometric' }
     };
   }
 
@@ -289,22 +319,19 @@ function verifyFacialStructure(pixelData, imgW, imgH, box) {
     return {
       isFace: true,
       confidence,
-      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'fallback_skin_texture' }
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), coverageRatio: Number(coverageRatio.toFixed(3)), path: 'fallback_skin_texture' }
     };
   }
 
   // TIER 3 — "JUST SKIN, BLUR IT" (lowest confidence, last resort):
-  // Per explicit instruction to keep the bar low: any region that is mostly
-  // skin-toned pixels with SOME non-flat texture (i.e. not a plain wall/UI
-  // swatch) gets blurred even with no facial-geometry evidence at all. This
-  // deliberately accepts more false positives (hands, necks, arms, tanned
-  // furniture) in exchange for essentially never missing a real face.
-  if (skinRatio >= CFG.FALLBACK_SKIN_RATIO && stdL >= 3) {
+  // Restricted strictly to localized candidates (coverageRatio < 0.20 and reasonable dimensions)
+  // so multi-face clusters or whole-page skin tones never get accepted under Tier 3.
+  if (skinRatio >= CFG.FALLBACK_SKIN_RATIO && stdL >= 3 && coverageRatio < 0.20 && bw <= 450 && bh <= 450) {
     const confidence = Number(Math.max(CFG.MIN_ACCEPT_CONFIDENCE, Math.min(0.55, 0.20 + skinRatio * 0.25)).toFixed(2));
     return {
       isFace: true,
       confidence,
-      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), path: 'skin_only_low_bar' }
+      metrics: { symmetry: Number(symmetry.toFixed(2)), eyeCavityPresent, skinRatio: Number(skinRatio.toFixed(2)), stdL: Number(stdL.toFixed(1)), coverageRatio: Number(coverageRatio.toFixed(3)), path: 'skin_only_low_bar' }
     };
   }
 
@@ -386,7 +413,7 @@ function blurRegion(ctx, x, y, w, h, radius) {
  */
 async function broadcastTelemetry(payload) {
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-    chrome.runtime.sendMessage(payload).catch(() => {});
+    chrome.runtime.sendMessage(payload).catch(() => { });
   }
   if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
     try {
@@ -397,19 +424,19 @@ async function broadcastTelemetry(payload) {
             try {
               await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['debug-bridge.js'] });
               chrome.tabs.sendMessage(tab.id, { ravenTelemetry: true, payload });
-            } catch (_) {}
+            } catch (_) { }
           }
         });
       }
-    } catch (_) {}
+    } catch (_) { }
   }
   if (typeof fetch === 'function') {
     fetch('http://localhost:8765/telemetry', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    }).catch(() => {});
+    }).catch(() => { });
   }
   if (typeof BroadcastChannel !== 'undefined') {
-    try { const bc = new BroadcastChannel('raven-telemetry'); bc.postMessage(payload); bc.close(); } catch (_) {}
+    try { const bc = new BroadcastChannel('raven-telemetry'); bc.postMessage(payload); bc.close(); } catch (_) { }
   }
 }
 
@@ -434,7 +461,7 @@ async function requestAvatarRegions(tabId) {
         await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
         await new Promise((r) => setTimeout(r, 150));
         return await sendGetAvatarRegions(tabId);
-      } catch (_) {}
+      } catch (_) { }
     }
     return { regions: [] };
   }
@@ -453,7 +480,7 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       tabId = activeTab?.id;
-    } catch (_) {}
+    } catch (_) { }
   }
 
   await broadcastTelemetry({
@@ -499,41 +526,84 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     let candidateBoxes = [];
     if (tabId) {
       const regionData = await requestAvatarRegions(tabId);
-      if (regionData?.viewport?.devicePixelRatio) dpr = regionData.viewport.devicePixelRatio;
+      const vpW = regionData?.viewport?.width || 0;
+      const vpH = regionData?.viewport?.height || 0;
       const domRegions = (regionData?.regions || []).slice(0, CFG.MAX_REGIONS);
       for (const reg of domRegions) {
-        const x = Math.max(0, Math.round(reg.x * dpr));
-        const y = Math.max(0, Math.round(reg.y * dpr));
-        const w = Math.min(canvas.width - x, Math.round(reg.width * dpr));
-        const h = Math.min(canvas.height - y, Math.round(reg.height * dpr));
-        if (w >= 16 && h >= 16) {
-          candidateBoxes.push({ x, y, width: w, height: h, matchType: reg.matchType || 'dom_avatar' });
+        const norm = normalizeVisualRegionToM1(
+          reg,
+          { width: vpW, height: vpH, coordinateSpace: 'dom-css-viewport' },
+          { width: canvas.width, height: canvas.height, coordinateSpace: CANONICAL_COORDINATE_SPACE },
+          { maxCoverageRatio: CFG.MAX_FACE_COVERAGE_RATIO }
+        );
+
+        if (norm.isValid && norm.normalizedBox) {
+          const { x, y, width: w, height: h } = norm.normalizedBox;
+          if (w >= 16 && h >= 16) {
+            candidateBoxes.push({
+              x, y, width: w, height: h,
+              imageBox: { x, y, width: w, height: h }, // Whole image container
+              sourceBox: norm.sourceBox,
+              sourceSpace: norm.sourceSpace,
+              sourceDimensions: norm.sourceDimensions,
+              matchType: reg.matchType || 'dom_avatar'
+            });
+          }
         }
       }
     }
 
-    // FIX: this used to only run when candidateBoxes.length === 0, meaning a
-    // single (possibly wrong) DOM avatar match — e.g. a logo image whose
-    // class name happened to contain "avatar" — would suppress whole-page
-    // scanning entirely, so real faces elsewhere on the page (e.g. a webcam
-    // <video> tile, a photo not tagged with an avatar/profile class) never
-    // got evaluated at all. Now it always runs; step 5's NMS/IoU pass below
-    // already de-duplicates any boxes that overlap with DOM-found regions,
-    // so this only adds coverage, never double-blurs the same face.
+    // Visual skin clustering across full screenshot
     {
       const maskInfo = buildSkinMask(ctx, 0, 0, canvas.width, canvas.height);
       const rawBlobs = findBlobs(maskInfo.mask, maskInfo.mw, maskInfo.mh);
-      const merged = mergeBlobs(rawBlobs, CFG.MERGE_DISTANCE_PX);
+      const maxBlobDimW = Math.round(maskInfo.mw * CFG.MAX_CANDIDATE_DIM_RATIO);
+      const maxBlobDimH = Math.round(maskInfo.mh * CFG.MAX_CANDIDATE_DIM_RATIO);
+      const merged = mergeBlobs(rawBlobs, CFG.MERGE_DISTANCE_PX, maxBlobDimW, maxBlobDimH);
       for (const b of merged) {
         const bw = b.maxX - b.minX + 1;
         const bh = b.maxY - b.minY + 1;
+        // Skip blobs that exceed maximum face proportion (backgrounds, huge areas)
+        if (bw > maxBlobDimW || bh > maxBlobDimH) continue;
+
         if (bw >= 4 && bh >= 4) {
-          const x = Math.max(0, Math.round(b.minX * maskInfo.scaleX));
-          const y = Math.max(0, Math.round(b.minY * maskInfo.scaleY));
-          const w = Math.min(canvas.width - x, Math.round(bw * maskInfo.scaleX));
-          const h = Math.min(canvas.height - y, Math.round(bh * maskInfo.scaleY));
-          if (w >= 16 && h >= 16) {
-            candidateBoxes.push({ x, y, width: w, height: h, matchType: 'visual_skin_cluster' });
+          const rawBox = {
+            x: Math.round(b.minX * maskInfo.scaleX),
+            y: Math.round(b.minY * maskInfo.scaleY),
+            width: Math.round(bw * maskInfo.scaleX),
+            height: Math.round(bh * maskInfo.scaleY)
+          };
+          const norm = normalizeVisualRegionToM1(
+            rawBox,
+            { width: canvas.width, height: canvas.height, coordinateSpace: 'm5-analysis-pixels' },
+            { width: canvas.width, height: canvas.height, coordinateSpace: CANONICAL_COORDINATE_SPACE },
+            { maxCoverageRatio: CFG.MAX_FACE_COVERAGE_RATIO }
+          );
+
+          if (norm.isValid && norm.normalizedBox) {
+            const { x, y, width: w, height: h } = norm.normalizedBox;
+            if (w >= 16 && h >= 16) {
+              // Match skin cluster to containing DOM image if present
+              let containingImage = null;
+              const cx = x + w / 2;
+              const cy = y + h / 2;
+              for (const c of candidateBoxes) {
+                if (c.imageBox && cx >= c.imageBox.x && cx <= c.imageBox.x + c.imageBox.width &&
+                  cy >= c.imageBox.y && cy <= c.imageBox.y + c.imageBox.height) {
+                  containingImage = c.imageBox;
+                  break;
+                }
+              }
+
+              candidateBoxes.push({
+                x, y, width: w, height: h,
+                imageBox: containingImage || { x, y, width: w, height: h },
+                sourceBox: norm.sourceBox,
+                sourceSpace: norm.sourceSpace,
+                sourceDimensions: norm.sourceDimensions,
+                matchType: 'visual_skin_cluster'
+              });
+            }
           }
         }
       }
@@ -548,6 +618,7 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
       if (verification.isFace) {
         verifiedCandidates.push({
           box: cand,
+          imageBox: cand.imageBox,
           confidence: verification.confidence,
           metrics: verification.metrics,
           matchType: cand.matchType
@@ -556,12 +627,11 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     }
 
     // 5. Non-Maximum Suppression (NMS) to eliminate duplicate overlapping boxes
+    // Multiple distant faces are preserved as independent regions
     verifiedCandidates.sort((a, b) => b.confidence - a.confidence);
     const finalFaces = [];
     for (const cand of verifiedCandidates) {
-      // Raised NMS overlap bar from 0.35 -> 0.55 so only near-duplicate boxes
-      // get suppressed — adjacent-but-distinct skin regions (e.g. two people
-      // close together) are both kept instead of one swallowing the other.
+      // Only near-duplicate boxes on the exact same face get suppressed (IoU > 0.55)
       const overlaps = finalFaces.some(f => computeIoU(f.box, cand.box) > 0.55);
       if (!overlaps) {
         finalFaces.push(cand);
@@ -569,10 +639,22 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
     }
 
     // 6. Blur verified faces and construct sanitized metadata
+    // "if something is blurred, blur the whole image itself, dont draw bounding box, the blur should strictly stay inside the image only"
     const items = [];
     for (const f of finalFaces) {
-      const { x, y, width: w, height: h } = f.box;
-      const radius = Math.min(CFG.MAX_BLUR_RADIUS, Math.max(CFG.MIN_BLUR_RADIUS, Math.round(w * CFG.BLUR_RADIUS_RATIO)));
+      // Blur the WHOLE containing image itself, strictly within image bounds
+      const targetBox = f.imageBox || f.box;
+      const validation = validateBoundingBox(targetBox, canvas.width, canvas.height, {
+        maxCoverageRatio: CFG.MAX_FACE_COVERAGE_RATIO
+      });
+      if (!validation.isValid || !validation.box) {
+        console.warn('[M5 PII] Rejected invalid image bounding box before redaction:', validation.reason, targetBox);
+        continue;
+      }
+
+      const { x, y, width: w, height: h } = validation.box;
+      const radius = Math.min(CFG.MAX_BLUR_RADIUS, Math.max(CFG.MIN_BLUR_RADIUS, Math.round(Math.min(w, h) * CFG.BLUR_RADIUS_RATIO)));
+      // Box blur directly on image pixels — strictly stays inside the image boundaries
       blurRegion(ctx, x, y, w, h, radius);
 
       // Thumbnail generation
@@ -583,23 +665,45 @@ export async function runM5PiiAnalysis(tabId, context = {}) {
         tctx.drawImage(canvas, x, y, w, h, 0, 0, CFG.THUMB_SIZE, CFG.THUMB_SIZE);
         const thumbBlob = await thumb.convertToBlob({ type: 'image/png' });
         thumbDataUrl = await blobToDataUrl(thumbBlob);
-      } catch (_) {}
+      } catch (_) { }
 
-      items.push({
+      const item = {
         id: `FACE-${items.length + 1}`,
         detectionId: `FACE-${items.length + 1}`,
         category: 'Face / Avatar',
         type: 'face',
         confidence: f.confidence,
-        box: { x, y, width: w, height: h },
-        boundingBox: { x, y, width: w, height: h },
+        coordinateSpace: CANONICAL_COORDINATE_SPACE,
+        sourceSpace: f.box.sourceSpace || 'm5-analysis-pixels',
+        sourceBox: f.box.sourceBox || { x, y, width: w, height: h },
+        sourceDimensions: f.box.sourceDimensions || { width: canvas.width, height: canvas.height },
+        box: { x, y, width: w, height: h, coordinateSpace: CANONICAL_COORDINATE_SPACE },
+        boundingBox: { x, y, width: w, height: h, coordinateSpace: CANONICAL_COORDINATE_SPACE },
+        imageBox: { x, y, width: w, height: h, coordinateSpace: CANONICAL_COORDINATE_SPACE },
         center: { x: x + Math.round(w / 2), y: y + Math.round(h / 2) },
         stage: 'sanitized',
         source: 'classical_biometric_cv',
         thumbnailDataUrl: thumbDataUrl,
         matchType: f.matchType,
-        metrics: f.metrics
-      });
+        metrics: f.metrics,
+        coverageRatio: validation.coverageRatio
+      };
+
+      items.push(item);
+
+      // Emit zero-leak coordinate transformation telemetry
+      broadcastTelemetry(createCoordinateTelemetry(item.id, {
+        sourceSpace: item.sourceSpace,
+        sourceDimensions: item.sourceDimensions,
+        sourceBox: item.sourceBox,
+        targetSpace: CANONICAL_COORDINATE_SPACE,
+        targetDimensions: { width: canvas.width, height: canvas.height },
+        normalizedBox: item.box,
+        scaleX: Number((canvas.width / (item.sourceDimensions?.width || canvas.width)).toFixed(4)),
+        scaleY: Number((canvas.height / (item.sourceDimensions?.height || canvas.height)).toFixed(4)),
+        coverageRatio: validation.coverageRatio,
+        isValid: true
+      })).catch(() => { });
     }
 
     // Full-page screenshot with all verified faces blurred
@@ -676,7 +780,7 @@ export async function runM5PiiScan(input = {}) {
     if (input.tabId && typeof chrome !== 'undefined' && chrome.tabs) {
       return await runM5PiiAnalysis(input.tabId, input);
     }
-  } catch (_) {}
+  } catch (_) { }
   return {
     ok: true,
     data: {

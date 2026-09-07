@@ -1,4 +1,4 @@
-﻿/**
+/**
  * m6-fusion.js â€” RAVEN Milestone M6: Perception Fusion & Privacy Sanitization Gate
  * 
  * Multi-Modal Perception Fusion & Strict Fail-Closed Privacy Boundary:
@@ -19,6 +19,13 @@
  * 6. STRICT FAIL-CLOSED PRIVACY GATE: If any check fails, observation release is blocked.
  * 7. ZERO-LEAK TELEMETRY: Raw sensitive values are NEVER exposed in logs, telemetry, or payloads.
  */
+
+import {
+  CANONICAL_COORDINATE_SPACE,
+  normalizeVisualRegionToM1,
+  validateBoundingBox,
+  createCoordinateTelemetry
+} from './coordinate-utils.js';
 
 const COMMON_WEB_TERMS = new Set([
   'navigation', 'nav', 'menu', 'settings', 'profile', 'account', 'login', 'logout', 'signin', 'signout',
@@ -537,40 +544,135 @@ export function sanitizeObservationPayload(rawObservation, textDetections = [], 
   };
 }
 
+// Fast separable box blur for image redaction
+function fastBoxBlur(pixels, w, h, radius) {
+  if (radius < 1 || w <= 0 || h <= 0 || !pixels) return;
+  const win = radius * 2 + 1;
+  const a = new Uint8ClampedArray(pixels);
+  const b = new Uint8ClampedArray(a.length);
+
+  for (let row = 0; row < h; row++) {
+    const base = row * w * 4;
+    let R = 0, G = 0, B = 0, A = 0;
+    for (let dx = -radius; dx <= radius; dx++) {
+      const xx = Math.min(w - 1, Math.max(0, dx));
+      const idx = base + xx * 4;
+      R += a[idx]; G += a[idx + 1]; B += a[idx + 2]; A += a[idx + 3];
+    }
+    for (let col = 0; col < w; col++) {
+      const o = base + col * 4;
+      b[o] = R / win; b[o + 1] = G / win; b[o + 2] = B / win; b[o + 3] = A / win;
+      const addX = Math.min(w - 1, col + radius + 1), remX = Math.max(0, col - radius);
+      const ai = base + addX * 4, ri = base + remX * 4;
+      R += a[ai] - a[ri]; G += a[ai + 1] - a[ri + 1];
+      B += a[ai + 2] - a[ri + 2]; A += a[ai + 3] - a[ri + 3];
+    }
+  }
+
+  for (let col = 0; col < w; col++) {
+    let R = 0, G = 0, B = 0, A = 0;
+    for (let dy = -radius; dy <= radius; dy++) {
+      const yy = Math.min(h - 1, Math.max(0, dy));
+      const idx = (yy * w + col) * 4;
+      R += b[idx]; G += b[idx + 1]; B += b[idx + 2]; A += b[idx + 3];
+    }
+    for (let row = 0; row < h; row++) {
+      const o = (row * w + col) * 4;
+      pixels[o] = R / win; pixels[o + 1] = G / win; pixels[o + 2] = B / win; pixels[o + 3] = A / win;
+      const addY = Math.min(h - 1, row + radius + 1), remY = Math.max(0, row - radius);
+      const ai = (addY * w + col) * 4, ri = (remY * w + col) * 4;
+      R += b[ai] - b[ri]; G += b[ai + 1] - b[ri + 1];
+      B += b[ai + 2] - b[ri + 2]; A += b[ai + 3] - b[ri + 3];
+    }
+  }
+}
+
 // --- Visual Canvas Redaction ---
-export async function redactVisualCanvas(canvasOrBitmap, boundingBoxes = []) {
+// "if something is blurred, blur the whole image itself, dont draw bounding box, the blur should strictly stay inside the image only"
+export async function redactVisualCanvas(canvasOrBitmap, boundingBoxes = [], sourceDims = null) {
   if (!canvasOrBitmap) return null;
   try {
     let canvas, ctx;
     if (typeof OffscreenCanvas !== 'undefined' && (canvasOrBitmap instanceof OffscreenCanvas)) {
       canvas = canvasOrBitmap;
       ctx = canvas.getContext('2d');
-    } else if (typeof document !== 'undefined' && canvasOrBitmap.getContext) {
+    } else if (canvasOrBitmap && typeof canvasOrBitmap.getContext === 'function') {
       canvas = canvasOrBitmap;
       ctx = canvas.getContext('2d');
     } else {
       return null;
     }
 
-    // Apply safety-padded opaque redaction blocks
-    ctx.save();
-    ctx.fillStyle = '#1e293b'; // Slate dark mask
-    ctx.strokeStyle = '#f43f5e'; // Rose border
-    ctx.lineWidth = 2;
+    const cW = canvas.width || 0;
+    const cH = canvas.height || 0;
+    if (cW <= 0 || cH <= 0) return canvas;
 
-    for (const box of boundingBoxes) {
-      const pad = 4;
-      const rx = Math.max(0, (box.x || 0) - pad);
-      const ry = Math.max(0, (box.y || 0) - pad);
-      const rw = Math.min(canvas.width - rx, (box.width || 0) + pad * 2);
-      const rh = Math.min(canvas.height - ry, (box.height || 0) + pad * 2);
+    // Determine coordinate scaling if canvas dimensions differ from canonical source dimensions
+    const srcW = sourceDims?.width || cW;
+    const srcH = sourceDims?.height || cH;
+    const scaleX = (srcW > 0 && srcW !== cW) ? cW / srcW : 1;
+    const scaleY = (srcH > 0 && srcH !== cH) ? cH / srcH : 1;
+
+    for (const rawBox of boundingBoxes) {
+      if (!rawBox) continue;
+      // Prefer imageBox (the whole image container) if available, or bbox
+      const b = Array.isArray(rawBox)
+        ? { x: rawBox[0], y: rawBox[1], width: rawBox[2], height: rawBox[3] }
+        : (rawBox.imageBox || rawBox.bbox || rawBox.box || rawBox);
+
+      const val = validateBoundingBox(b, srcW, srcH, { maxCoverageRatio: 0.45 });
+      if (!val.isValid || !val.box) {
+        // Skip invalid bounding boxes — NEVER convert into a full-screen redaction!
+        console.warn('[M6 Redact] Skipping invalid bounding box during canvas redaction:', val.reason, b);
+        continue;
+      }
+
+      const bx = Math.round(val.box.x * scaleX);
+      const by = Math.round(val.box.y * scaleY);
+      const bw = Math.round(val.box.width * scaleX);
+      const bh = Math.round(val.box.height * scaleY);
+
+      // The blur MUST strictly stay inside the image only — zero padding outside image borders!
+      const rx = Math.max(0, Math.min(cW, bx));
+      const ry = Math.max(0, Math.min(cH, by));
+      const rw = Math.max(0, Math.min(cW - rx, bw));
+      const rh = Math.max(0, Math.min(cH - ry, bh));
 
       if (rw > 0 && rh > 0) {
-        ctx.fillRect(rx, ry, rw, rh);
-        ctx.strokeRect(rx, ry, rw, rh);
+        let blurred = false;
+        try {
+          if (typeof ctx.getImageData === 'function' && typeof ctx.putImageData === 'function') {
+            const imgData = ctx.getImageData(rx, ry, rw, rh);
+            if (imgData && imgData.data && imgData.data.length > 0) {
+              const radius = Math.min(28, Math.max(6, Math.round(Math.min(rw, rh) * 0.12)));
+              fastBoxBlur(imgData.data, rw, rh, radius);
+              fastBoxBlur(imgData.data, rw, rh, radius);
+              ctx.putImageData(imgData, rx, ry);
+              blurred = true;
+            }
+          }
+        } catch (_) {}
+
+        if (!blurred) {
+          ctx.save();
+          if ('filter' in ctx) {
+            try {
+              ctx.filter = 'blur(16px)';
+              ctx.drawImage(canvas, rx, ry, rw, rh, rx, ry, rw, rh);
+              ctx.filter = 'none';
+              blurred = true;
+            } catch (_) {}
+          }
+          if (!blurred && typeof ctx.fillRect === 'function') {
+            // Clean slate block strictly inside image for mock / non-pixel environments
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(rx, ry, rw, rh);
+          }
+          ctx.restore();
+        }
+        // ZERO BOUNDING BOX: strictly NO ctx.strokeRect, NO bounding box outline drawn
       }
     }
-    ctx.restore();
 
     return canvas;
   } catch (_) {
@@ -659,6 +761,10 @@ export async function runM6PerceptionFusion(inputs = {}) {
     if (inputs.m4Result) inputsReceived.push('M4');
     if (inputs.m5Result) inputsReceived.push('M5');
 
+    // Canonical target dimensions from M1 screenshot
+    const tgtW = inputs.m1Result?.data?.image?.width || inputs.m1Result?.image?.width || inputs.m1Result?.data?.viewport?.width || 1024;
+    const tgtH = inputs.m1Result?.data?.image?.height || inputs.m1Result?.image?.height || inputs.m1Result?.data?.viewport?.height || 768;
+
     // 1. Contextual Multi-Modal PII Detection (OCR + DOM + Visual)
     const piiAnalysis = detectContextualPii({
       ocrBlocks: m4Blocks,
@@ -670,13 +776,68 @@ export async function runM6PerceptionFusion(inputs = {}) {
     const textDetections = piiAnalysis.detections;
     const candidatesEvaluated = piiAnalysis.candidatesEvaluated;
 
-    // 2. Ingest M5 Face Detections
-    const faceDetections = m5Items.filter(item => item.type === 'face' || item.category === 'Face / Avatar');
+    // 2. Ingest M5 Face Detections with Canonical Coordinate Validation
+    // Preserves multiple faces as independent regions (NO global union box)
+    const rawFaceDetections = m5Items.filter(item => item.type === 'face' || item.category === 'Face / Avatar');
+    const validatedFaces = [];
+
+    for (let idx = 0; idx < rawFaceDetections.length; idx++) {
+      const fd = rawFaceDetections[idx];
+      // "if something is blurred, blur the whole image itself" — use imageBox if present
+      const rawBox = fd.imageBox || fd.box || fd.boundingBox || fd.bbox || { x: 0, y: 0, width: 0, height: 0 };
+      const sourceDimensions = fd.sourceDimensions || { width: tgtW, height: tgtH };
+
+      // Normalize to canonical M1 coordinates
+      const norm = normalizeVisualRegionToM1(
+        rawBox,
+        {
+          width: sourceDimensions.width || tgtW,
+          height: sourceDimensions.height || tgtH,
+          coordinateSpace: fd.sourceSpace || (fd.coordinateSpace === CANONICAL_COORDINATE_SPACE ? CANONICAL_COORDINATE_SPACE : 'dom-css-viewport')
+        },
+        {
+          width: tgtW,
+          height: tgtH,
+          coordinateSpace: CANONICAL_COORDINATE_SPACE
+        },
+        { maxCoverageRatio: 0.45 }
+      );
+
+      if (!norm.isValid || !norm.normalizedBox) {
+        console.warn(`[M6 Fusion] Rejected invalid face bounding box (${fd.id || idx}):`, norm.reason, rawBox);
+        // Privacy invariant: Do NOT create a full-screen redaction
+        continue;
+      }
+
+      const faceItem = {
+        id: fd.id || `FACE-${idx + 1}`,
+        type: 'face',
+        category: 'Face / Avatar',
+        source: fd.source || 'M5_VISUAL',
+        bbox: norm.normalizedBox,
+        box: norm.normalizedBox,
+        imageBox: norm.normalizedBox,
+        coordinateSpace: CANONICAL_COORDINATE_SPACE,
+        sourceBox: norm.sourceBox,
+        sourceSpace: norm.sourceSpace,
+        confidence: fd.confidence || 0.88,
+        evidence: fd.evidence || ['biometric-face-structure'],
+        coverageRatio: norm.coverageRatio,
+        action: 'REDACTED'
+      };
+
+      validatedFaces.push(faceItem);
+
+      // Emit zero-leak coordinate transformation telemetry
+      broadcastTelemetry(createCoordinateTelemetry(faceItem.id, norm)).catch(() => {});
+    }
+
     const sensitiveTargetIds = new Set(
       textDetections.map(d => d.target_id).filter(Boolean)
     );
 
     // Build unified redaction plan (without raw PII values for safe telemetry)
+    // Multiple faces are preserved as distinct, independent regions
     const unifiedRedactionRegions = [
       ...textDetections.map(td => ({
         id: td.id,
@@ -687,13 +848,14 @@ export async function runM6PerceptionFusion(inputs = {}) {
         evidence: td.evidence,
         action: 'REDACTED'
       })),
-      ...faceDetections.map((fd, idx) => ({
-        id: fd.id || `FACE-${idx + 1}`,
+      ...validatedFaces.map(vf => ({
+        id: vf.id,
         type: 'face',
-        source: fd.source || 'M5_VISUAL',
-        bbox: fd.box || fd.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
-        confidence: fd.confidence || 0.88,
-        evidence: ['biometric-face-structure'],
+        source: vf.source,
+        bbox: vf.bbox,
+        coordinateSpace: CANONICAL_COORDINATE_SPACE,
+        confidence: vf.confidence,
+        evidence: vf.evidence,
         action: 'REDACTED'
       }))
     ];

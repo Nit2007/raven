@@ -32,9 +32,9 @@
     if (typeof el.nodeName === 'string') return el.nodeName.toLowerCase();
     try {
       const raw = Object.getOwnPropertyDescriptor(Element.prototype, 'tagName')?.get?.call(el) ||
-                  Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')?.get?.call(el);
+        Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName')?.get?.call(el);
       if (typeof raw === 'string') return raw.toLowerCase();
-    } catch (_) {}
+    } catch (_) { }
     return '';
   }
 
